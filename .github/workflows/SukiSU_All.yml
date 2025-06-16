@@ -116,7 +116,7 @@ jobs:
           free -h
 
       - name: Configure Git
-        run: |          
+        run: |
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
 
@@ -193,7 +193,6 @@ jobs:
             if [ "$FAST_BUILD" == "true" ]; then
               sed -i "s/^res=.*/res=\"-${ANDROID_VERSION}-${SUFFIX}\"/" "$path"
             else
-              # Use official script for compilation, may be limited by special symbol count when using build_with_bazel, must be less than 4
               sed -i '/^res=/a res=$(echo "$res" | sed -E '\''s/(-[0-9]+-o-)?-g[0-9a-f]{7,}.*$//'\'')' "$path"
               sed -i "\$s|echo \"\\\$res\"|echo \"\$res-${SUFFIX}\"|" "$path"
             fi
@@ -215,7 +214,7 @@ jobs:
             kernel_platform/msm-kernel/scripts/setlocalversion \
             kernel_platform/external/dtc/scripts/setlocalversion; do
             [ -f "$path" ] || continue
-            if [ "$FAST_BUILD" = "true" ]; then
+            if [ "$FAST_BUILD" == "true" ]; then
               sed -i "s/^res=.*/res=\"-${ANDROID_VERSION}-${RANDOM_SUFFIX}\"/" "$path"
             else
               sed -i '/^res=/a res=$(echo "$res" | sed -E '\''s/(-[0-9]+-o-)?-g[0-9a-f]{7,}//'\'')' "$path"
@@ -235,10 +234,54 @@ jobs:
           curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/$feil.xml"
           mv "$feil.xml" ".repo/manifests/${feil}.xml"
 
+      - name: Clone External Repositories
+        run: |
+          cd kernel_workspace
+          echo "Cloning SukiSU_patch repository"
+          if ! git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1 -b main; then
+            echo "Failed to clone SukiSU_patch repository. Check URL or network connectivity."
+            exit 1
+          fi
+          if [ ! -d "SukiSU_patch" ]; then
+            echo "SukiSU_patch directory not created after clone. Aborting."
+            exit 1
+          fi
+          echo "SukiSU_patch cloned successfully. Listing contents:"
+          ls -la SukiSU_patch
+          if [ ! -f "SukiSU_patch/hooks/syscall_hooks.patch" ]; then
+            echo "syscall_hooks.patch not found in SukiSU_patch/hooks."
+            exit 1
+          fi
+          if [ ! -f "SukiSU_patch/69_hide_stuff.patch" ]; then
+            echo "69_hide_stuff.patch not found in SukiSU_patch."
+            exit 1
+          fi
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            if [ ! -f "SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4kd.patch" ]; then
+              echo "lz4kd.patch not found in SukiSU_patch for kernel version ${{ needs.get-config.outputs.KERNEL_VERSION }}."
+              exit 1
+            fi
+            if [ ! -f "SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4k_oplus.patch" ]; then
+              echo "lz4k_oplus.patch not found in SukiSU_patch for kernel version ${{ needs.get-config.outputs.KERNEL_VERSION }}."
+              exit 1
+            fi
+          fi
+          echo "Cloning susfs4ksu repository"
+          if ! git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }} --depth=1; then
+            echo "Failed to clone susfs4ksu repository. Check URL or branch."
+            exit 1
+          fi
+          if [ ! -d "susfs4ksu" ]; then
+            echo "susfs4ksu directory not created after clone. Aborting."
+            exit 1
+          fi
+          echo "susfs4ksu cloned successfully. Listing contents:"
+          ls -la susfs4ksu
+
       - name: Add KernelSU-SukiSU Ultra
         run: |
           cd kernel_workspace/kernel_platform
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          curl -LSs --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
           cd ./KernelSU
           KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10606)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
@@ -247,10 +290,7 @@ jobs:
 
       - name: Apply Patches SukiSU Ultra
         run: |
-          cd kernel_workspace
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
-          cd kernel_platform
+          cd kernel_workspace/kernel_platform
           echo "Applying susfs patch"
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
@@ -269,84 +309,81 @@ jobs:
           if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
             echo "Fixing some legacy issues that may exist in kernel versions 5.15.0 to 5.15.123"
             curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
-            patch -p1 < fix_5.15.legacy.patch || true
+            if [ ! -f "fix_5.15.legacy.patch" ]; then
+              echo "Failed to download fix_5.15.legacy.patch."
+              exit 1
+            fi
+            patch -p1 < fix_5.15.legacy.patch
             echo "fix_5.15_patch completed"
           fi
           feil="${{ github.event.inputs.FEIL }}"
           TRUSTY_EXISTS="false"
-          if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+          if [[ "${{ needs.get-config.outputs.KERNEL_VERSION }}" == "6.6" ]]; then
             if grep -qr 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests/${feil}.xml"; then
               TRUSTY_EXISTS="true"
             fi
             echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
             if [[ "$TRUSTY_EXISTS" == "false" ]]; then
               echo "Fixing susfs issues for some models with kernel version 6.6"
-              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${KERNEL_VERSION}.patch
-              sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${KERNEL_VERSION}.patch
+              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch
+              sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch
             fi
           fi
-          patch -p1 < 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch || true
+          patch -p1 < 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch
           echo "susfs_patch completed"
 
       - name: Apply Hide Stuff Patches
         run: |
           cd kernel_workspace/kernel_platform/common
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
           echo "Applying hide application patch"
-          patch -p1 -F 3 < 69_hide_stuff.patch || true
+          patch -p1 -F 3 < 69_hide_stuff.patch
           echo "hide_application_patch completed"
-          rm -rf ../../SukiSU_patch
+
+      - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
+        if: ${{ needs.get-config.outputs.KERNEL_VERSION == '6.6' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
+          curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://github.com/Numbersf/Action-Build/raw/SukiSU-Ultra/patches/hmbird_patch.patch
+          if [ ! -f "hmbird_patch.patch" ]; then
+            echo "Failed to download hmbird_patch.patch."
+            exit 1
+          fi
+          echo "Applying OGKI to GKI patch"
+          patch -p1 -F 3 < hmbird_patch.patch
+          echo "OGKI to GKI patch completed"
 
       - name: Apply VFS
         if: ${{ github.event.inputs.VFS == 'true' }}
         run: |
-          cd kernel_workspace
-          echo "Listing contents of kernel_workspace:"
-          ls -la
-          if [ ! -d "SukiSU_patch" ]; then
-            echo "SukiSU_patch directory not found. Clone may have failed."
-            exit 1
-          fi
-          echo "SukiSU_patch directory exists. Listing contents:"
-          ls -la SukiSU_patch
-          if [ ! -d "SukiSU_patch/hooks" ]; then
-            echo "hooks directory not found in SukiSU_patch."
-            exit 1
-          fi
-          if [ ! -f "SukiSU_patch/hooks/syscall_hooks.patch" ]; then
-            echo "syscall_hooks.patch not found in SukiSU_patch/hooks."
-            exit 1
-          fi
-          cd kernel_platform/common
+          cd kernel_workspace/kernel_platform/common
           cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
           echo "Applying vfs patch"
-          patch -p1 -F 3 < syscall_hooks.patch || true
+          patch -p1 -F 3 < syscall_hooks.patch
           echo "vfs_patch completed"
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform/common
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
           cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4kd.patch ./
           echo "Applying lz4kd patch"
-          patch -p1 -F 3 < lz4kd.patch || true
+          patch -p1 -F 3 < lz4kd.patch
           echo "lz4kd_patch completed"
           cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4k_oplus.patch ./
           echo "Applying lz4k_oplus patch"
-          patch -p1 -F 3 < lz4k_oplus.patch || true
+          patch -p1 -F 3 < lz4k_oplus.patch
           echo "lz4k_oplus_patch completed"
-          rm -rf ../../SukiSU_patch
 
       - name: Add sched_ext
         if: ${{ github.event.inputs.SCHED == 'true' }}
         run: |
-          cd kernel_workspace
-          git clone https://github.com/HanKuCha/sched_ext.git
+          cd kernel_workspace/kernel_platform
+          git clone https://github.com/HanKuCha/sched_ext.git --depth=1
           cp -r ./sched_ext/* ./common/kernel/sched
           rm -rf ./sched_ext
-          cd ./common/kernel/sched
+          cd common/kernel/sched
 
       - name: Add Configuration Settings
         run: |
@@ -459,14 +496,18 @@ jobs:
             LTO=thin ./kernel_platform/build_with_bazel.py -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           else
             LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
-            ./platform/lts/build/lts_build_kernl.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+            ./platform/lts/build/lts_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           fi
 
       - name: Apply patch_linux and replace Image
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
-          curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.github.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
+          curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
+          if [ ! -f "patch_linux" ]; then
+            echo "Failed to download patch_linux."
+            exit 1
+          fi
           chmod +x patch_linux
           ./patch_linux
           rm -f Image
@@ -529,6 +570,57 @@ jobs:
               fi
             done
           fi
+
+      # Uncomment the following steps if you want to enable SUSFS module downloads
+      # - name: Download Latest SUSFS Module from CI
+      #   if: ${{ github.event.inputs.SUSFS_CI == 'CI' }}
+      #   continue-on-error: true
+      #   run: |
+      #     LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+      #       "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+      #       jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+      #     if [ -z "$LATEST_RUN_ID" ]; then
+      #       echo "No successful run found for branch v1.5.2+"
+      #     else
+      #       ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+      #         "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+      #       if [ -n "$ARTIFACT_URL" ]; then
+      #         curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+      #         cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
+      #       else
+      #         echo "Failed to fetch artifact URL"
+      #       fi
+      #     fi
+      #
+      # - name: Download Latest SUSFS Module from Release
+      #   if: ${{ github.event.inputs.SUSFS_CI == 'Release' }}
+      #   continue-on-error: true
+      #   run: |
+      #     wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
+      #     cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
+      #
+      # - name: Download Latest SukiSU-Ultra APK from CI
+      #   continue-on-error: true
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: |
+      #     run_id=$(gh api \
+      #       "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=main&status=success&per_page=1" \
+      #       --jq '.workflow_runs[0].id' || echo "")
+      #     if [[ -z "$run_id" ]]; then
+      #       echo "⚠️ No successful workflow run found. Skipping artifact download."
+      #     else
+      #       artifact_url=$(gh api \
+      #         "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$run_id/artifacts" | \
+      #         jq -r '.artifacts[] | select(.name == "manager") | .archive_download_url' | head -n1)
+      #       if [[ -z "$artifact_url" ]]; then
+      #         echo "⚠️ No 'manager' artifact found in run $run_id. Skipping download."
+      #       else
+      #         echo "✅ Downloading from: $artifact_url"
+      #         curl -fL -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
+      #         unzip -j manager.zip "*.apk" -d ./AnyKernel3/
+      #       fi
+      #     fi
 
       - name: Set zip suffix
         id: suffix
@@ -605,3 +697,10 @@ jobs:
         with:
           name: ZRAM-Module_${{ needs.get-config.outputs.KERNEL_VERSION }}_${{ steps.feil_clean.outputs.value }}
           path: ZRAM-Module/*
+
+      - name: Upload Workspace on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel_workspace_debug
+          path: kernel_workspace/
