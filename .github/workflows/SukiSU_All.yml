@@ -239,8 +239,8 @@ jobs:
         run: |
           cd kernel_workspace
           echo "Cloning SukiSU_patch repository"
-          if ! git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1 -b main; then
-            echo "Failed to clone SukiSU_patch repository. Check URL or network connectivity."
+          if ! git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1 -b android-14; then
+            echo "Failed to clone SukiSU_patch repository. Check URL or branch."
             exit 1
           fi
           if [ ! -d "SukiSU_patch" ]; then
@@ -360,9 +360,24 @@ jobs:
         run: |
           cd kernel_workspace/kernel_platform/common
           cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
+          echo "Contents of syscall_hooks.patch:"
+          cat syscall_hooks.patch
           echo "Applying vfs patch"
-          patch -p1 -F 3 < syscall_hooks.patch
+          if ! patch -p1 -F 3 < syscall_hooks.patch; then
+            echo "Failed to apply syscall_hooks.patch. Check patch compatibility."
+            exit 1
+          fi
           echo "vfs_patch completed"
+          # Verify sucompat.c exists and contains su_kps
+          if [ -f "../KernelSU/kernel/sucompat.c" ]; then
+            echo "Checking sucompat.c for su_kps definition"
+            if ! grep -q "su_kps" ../KernelSU/kernel/sucompat.c; then
+              echo "Warning: su_kps not found in sucompat.c. Patch may be incomplete."
+            fi
+          else
+            echo "Error: sucompat.c not found in KernelSU/kernel."
+            exit 1
+          fi
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
@@ -484,7 +499,70 @@ jobs:
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
           make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
+          # Reapply configs to .config
+          CONFIG_FILE="out/.config"
+          if [ -f "$CONFIG_FILE" ]; then
+            echo "Reapplying custom configs to $CONFIG_FILE"
+            ./scripts/config --file "$CONFIG_FILE" \
+              --enable LTO_CLANG_THIN \
+              --enable CC_OPTIMIZE_FOR_PERFORMANCE \
+              --enable WQ_POWER_EFFICIENT_DEFAULT \
+              --enable KPROBES \
+              --enable TCP_CONG_ADVANCED \
+              --enable TCP_CONG_BBR \
+              --enable NET_FQ \
+              --enable TCP_CONG_HTCP \
+              --enable TPMFS_XATTR \
+              --enable TPMFS_POSIX_ACL \
+              --enable DEFAULT_FQ \
+              --enable NET_SFQ_SFQ \
+              --enable NET_SFQ_CODEL \
+              --enable NET_SQH_TBF \
+              --enable IPF_NF_TARGET_ECN \
+              --enable IP_ECN \
+              --enable TCP_ECN \
+              --enable IP6V_ECN \
+              --enable TCP_FASTOPEN \
+              --enable IP_NF_TARGET_TTL \
+              --enable IP6_NF_TARGET_HL \
+              --enable IP6_NF_MATCH_HL \
+              --enable BOEFFLA_WL_BLOCKER \
+              --disable LTO_CLANG_FULL \
+              --disable LTO_CLANG_NONE \
+              --disable TCP_CONG_BIC \
+              --disable TCP_CONG_WESTWOOD \
+              --disable DEBUG_KERNEL \
+              --disable DYNAMIC_DEBUG \
+              --disable DEBUG_INFO
+            if [ "${{ github.event.inputs.VFS }}" == "true" ]; then
+              ./scripts/config --file "$CONFIG_FILE" \
+                --disable KSU_SUSFS_SUSFS_SUS \
+                --enable KSU_MANUAL_HOOK
+            else
+              ./scripts/config --file "$CONFIG_FILE" \
+                --enable KPROBES
+            fi
+            if [ "${{ github.event.inputs.ZRAM }}" == "true" ]; then
+              ./scripts/config --file "$CONFIG_FILE" \
+                --enable CRYPTO_LZ4HC \
+                --enable CRYPTO_LZ4K \
+                --enable CRYPTO_LZ4KD \
+                --enable CRYPTO_8424 \
+                --enable CRYPTO_LZ4K_OPLUS \
+                --enable ZRAM_WRITEBACK
+            fi
+            ./scripts/config --file "$CONFIG_FILE" \
+              --set-str DEFAULT_NET_SCH fq
+            # Run olddefconfig and syncconfig
+            make -j$(nproc --all) O=out $MAKE_ARGS olddefconfig
+            make -j$(nproc --all) O=out $MAKE_ARGS syncconfig
+          fi
           make -j$(nproc --all) O=out $MAKE_ARGS
+          # Check for Image
+          if [ ! -f "out/arch/arm64/boot/Image" ]; then
+            echo "Kernel build failed to produce Image. Check logs."
+            exit 1
+          fi
 
       - name: Fallback Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
@@ -663,7 +741,7 @@ jobs:
       #   run: |
       #     LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
       #       "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-      #       jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+      #       jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n1)
       #     if [ -z "$LATEST_RUN_ID" ]; then
       #       echo "No successful run found for branch v1.5.2+"
       #     else
@@ -790,5 +868,6 @@ jobs:
           name: kernel_workspace_debug
           path: |
             kernel_workspace/
-            kernel_workspace/kernel_platform/bazel-out/
+            kernel_workspace/kernel_platform/KernelSU/kernel/
+            kernel_workspace/kernel_platform/common/drivers/kernelsu/
             kernel_workspace/config_diff.txt
