@@ -206,7 +206,7 @@ jobs:
 
       - name: Generate random kernel suffix if SUFFIX is empty
         if: ${{ github.event.inputs.SUFFIX == '' }}
-          run: |
+        run: |
             cd kernel_workspace
             ANDROID_VERSION="${{ needs.get-config.outputs.ANDROID_VERSION }}"
             FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
@@ -237,7 +237,7 @@ jobs:
         run: |
           feil="${{ github.event.inputs.FEIL }}"
           cpu="${{ needs.get-config.outputs.CPU }}"
-        mkdir -p .repo/mainfests
+          mkdir -p .repo/mainfests
           echo "Downloading manifest $feil.xml from branch oneplus/$cpu..."
           curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/$feil.xml"
           mv "$feil.xml" ".repo/mainfests/${feil}.xml"
