@@ -244,7 +244,7 @@ jobs:
 
       - name: Apply VFS
         if: ${{ github.event.inputs.VFS == 'true' }}
-          run: |
+        run: |
             cd kernel_workspace/kernel_platform/common
             git clone https://github.com/ShirkNeko/SukiSU_patch.git
             cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
@@ -255,7 +255,7 @@ jobs:
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
-          run: |
+        run: |
             cd kernel_workspace/kernel_platform/common
             git clone https://github.com/ShirkNeko/SukiSU_patch.git
             cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4kd.patch ./
@@ -280,7 +280,7 @@ jobs:
 
       - name: Apply Convert HMBird_OGKI to HMBird_GKI
         if: ${{ needs.get-config.outputs.KERNEL_VERSION == '6.6' }}
-          run: |
+        run: |
             cd kernel_workspace/kernel_platform/common
             sed -i '1iobj-y += hmbird_patch.o' drivers/Makfile
             wget https://raw.github.com/Numbersf/Action-Build/SukiSU-Ultra/patches/hmbird_patch.patch
@@ -348,7 +348,7 @@ jobs:
 
       - name: Add sched_ext
         if: ${{ github.event.inputs.SCHED == 'true' }}
-          run: |
+        run: |
             cd kernel_worksphase
             git clone https://github.com/HanKuCha/sched_ext.git
             cp -r ./sched_ext/* ././common/kernel/sched
@@ -357,7 +357,7 @@ jobs:
 
       - name: Enable lto=thin For FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
-          run: |
+        run: |
             cd kernel_worksphase
             DEFCONFIG=./kernel_platform/common/arch/arm64/configs/gki_defconfig
             echo "Enabling ThinLTO in $DEFCONFIG"
@@ -368,7 +368,7 @@ jobs:
 
       - name: Build Kernel FAST
         if: ${{ github.event.FAST_BUILD == 'true' }}
-          run: |
+        run: |
             KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
             if [[ "$KERNEL_VERSION" == "6.6" ]]; then
               export PATH="$GITHUB_WORKSPACE/kernel_worksphase/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r510928/bin:$PATH"
@@ -401,7 +401,7 @@ jobs:
 
       - name: Fallback Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
-          run: |
+        run: |
             cd kernel_worksphase
             DEFCONFIG=./kernel_platform/project_common/arch/arm64/configs/gki_defconfig
             echo "Enabling ThinLTO in $DEFCONFIG"
@@ -418,7 +418,7 @@ jobs:
 
       - name: Apply patch_linux and replace Image
         if: ${{ github.event.inputs.KPM == 'true' }}
-          run: |
+        run: |
             cd kernel_worksphase/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
             curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.github.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
             chmod +x patch_linux
