@@ -240,18 +240,16 @@ jobs:
           mkdir -p .repo/mainfests
           echo "Downloading manifest $feil.xml from branch oneplus/$cpu..."
           curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/$feil.xml"
-          mv "$feil.xml" ".repo/mainfests/${feil}.xml"
+          mv "$feil.xml" ".repo/mainfests/${feil}.xml"      
 
       - name: Apply VFS
         if: ${{ github.event.inputs.VFS == 'true' }}
         run: |
-            cd kernel_workspace/kernel_platform/common
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          cd kernel_workspace/kernel_platform/common
             cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
             echo "Applying vfs patch"
             patch -p1 -F 3 < syscall_hooks.patch
             echo "vfs_patch completed"
-            rm -rf ../../SukiSU_patch
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
