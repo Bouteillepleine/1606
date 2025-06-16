@@ -138,7 +138,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update && sudo apt upgrade -y
-          sudo apt install -y python3 git curl ccache make bc flex bison libelf-dev
+          sudo apt install -y python3 git curl ccache make bc flex bison libelf-dev lld
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -454,28 +454,33 @@ jobs:
         run: |
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
-            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r510928/bin:$PATH"
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
           elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
-            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r487747/bin:$PATH"
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r487747c/bin:$PATH"
           elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
-            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r450784/bin:$PATH"
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r450784e/bin:$PATH"
           elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
-            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts-master/clang/host/linux-x86_64/clang-r416183b/bin:$PATH"
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin:$PATH"
           else
-            echo "⚠️ Current kernel version \"$KERNEL_VERSION\" has no corresponding build script"
-            echo "Consider disabling FAST_BUILD or adding clang path for this version"
+            echo "⚠️ Current kernel version \"$KERNEL_VERSION\" has no corresponding clang toolchain"
+            echo "Falling back to official build script"
             cd kernel_workspace
-            LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./platform/lts/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
             exit 0
           fi
           ccache clang -v
+          if ! command -v ld.lld >/dev/null 2>&1; then
+            echo "Installing lld as fallback"
+            sudo apt install -y lld
+          fi
+          command -v ld.lld >/dev/null 2>&1 || { echo "ld.lld not found even after installing lld. Aborting."; exit 1; }
           sudo apt install -y libelf-dev
           cd kernel_workspace/kernel_platform/common
-          MAKE_ARGS="LLVM=1 ARCH=x86_64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
-          RUSTC=../../prebuilts/rust/linux-x86_64/1.73.0b/bin/rustc \
-          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86_64/bin/pahole \
-          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
+          MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
+            RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+            PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+            LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
           if [[ "$KERNEL_VERSION" == "5.10" ]]; then
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
