@@ -321,6 +321,8 @@ jobs:
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
           # VFS configuration
           if [ "${{ github.event.inputs.VFS }}" = "true" ]; then
+            echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
+            echo "CONFIG_KSU_KPROBES_HOOK=n" >> "$CONFIG_FILE"
             echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
           else
@@ -343,6 +345,7 @@ jobs:
             echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
             echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
           else
             echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
           fi
@@ -384,6 +387,9 @@ jobs:
           echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TCP_FASTOPEN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
       - name: Add TTL Target Support
         run: |
           echo "Changing to configuration directory: $CONFIG..."
@@ -392,6 +398,14 @@ jobs:
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # Disable debug options
+          echo "CONFIG_DEBUG_KERNEL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DYNAMIC_DEBUG=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_INFO=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BOEFFLA_WL_BLOCKER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
       - name: Disable Blacklisted Modules
         run: |
           echo "Disabling blacklisted modules in gki_defconfig and Kconfig files..."
