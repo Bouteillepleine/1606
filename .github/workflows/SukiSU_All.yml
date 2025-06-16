@@ -1,4 +1,4 @@
-name: Build OnePlus_SukiSU Ultra All
+name: Build OnePlus Ultra All
 on:
   workflow_dispatch:
     inputs:
@@ -6,7 +6,7 @@ on:
         type: choice
         description: "Configuration File"
         required: true
-        default: oneplus_13r
+        default: oneplus_ace2pro_v
         options:
           - oneplus_nord_ce4_v
           - oneplus_ace_3v_v
@@ -40,18 +40,9 @@ on:
         options:
           - gki
           - perf
-      SUSFS_CI:
-        type: choice
-        description: "SUSFS Module Download Method"
-        required: true
-        default: CI
-        options:
-          - CI
-          - Release
-          - NoN
       SUFFIX:
         type: string
-        description: "Custom Kernel Suffix (Leave empty to use random string)"
+        description: "Custom Kernel Suffix (leave empty to use random string)"
         required: false
         default: ""
       FAST_BUILD:
@@ -66,7 +57,7 @@ on:
         default: true
       KPM:
         type: boolean
-        description: "Enable Kernel Module (KPM)?"
+        description: "Enable Kernel Modules (KPM)?"
         required: true
         default: true
       SCHED:
@@ -99,9 +90,8 @@ jobs:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
-      CCACHE_DIR: /home/runner/.ccache
+      CCACHE_DIR: /home/runner/.ccache  
       CCACHE_MAXSIZE: 8G
-      CONFIG: ${{ github.workspace }}/kernel_workspace
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -124,10 +114,12 @@ jobs:
           sudo mkswap /swapfile
           sudo swapon /swapfile
           free -h
+
       - name: Configure Git
         run: |
-          git config --global user.name "O+builder"
-          git config --global user.email "O+builder@yahoo.com"
+          git config --global user.name "Numbersf"
+          git config --global user.email "263623064@qq.com"
+
       - name: Show selected inputs debug
         run: |
           echo "Selected CPU: ${{ needs.get-config.outputs.CPU }}"
@@ -137,16 +129,17 @@ jobs:
           echo "Selected KERNEL_VERSION: ${{ needs.get-config.outputs.KERNEL_VERSION }}"
           echo "Selected BUILD_METHOD: ${{ github.event.inputs.BUILD_METHOD }}"
           echo "Custom SUFFIX: ${{ github.event.inputs.SUFFIX }}"
-          echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
           echo "Selected VFS: ${{ github.event.inputs.VFS }}"
           echo "Selected KPM: ${{ github.event.inputs.KPM }}"
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
+
       - name: Install dependencies
         run: |
           sudo apt update && sudo apt upgrade -y
           sudo apt install -y python3 git curl ccache
+
       - name: Restore ccache
         uses: actions/cache@v3
         with:
@@ -154,11 +147,13 @@ jobs:
           key: ccache-${{ runner.os }}-${{ github.ref }}
           restore-keys: |
             ccache-${{ runner.os }}-
+
       - name: Install repo tool
         run: |
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
           chmod a+x ~/repo
           sudo mv ~/repo /usr/local/bin/repo
+
       - name: Initialize repo and sync
         run: |
           mkdir kernel_workspace && cd kernel_workspace
@@ -172,6 +167,7 @@ jobs:
           fi
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
           rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+
       - name: Force remove -dirty suffix
         run: |
           cd kernel_workspace/kernel_platform
@@ -181,6 +177,7 @@ jobs:
           sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
           git add -A
           git commit -m "Force remove -dirty suffix from kernel version"
+
       - name: Modify setlocalversion suffix if SUFFIX is set
         if: ${{ github.event.inputs.SUFFIX != '' }}
         run: |
@@ -188,34 +185,43 @@ jobs:
           SUFFIX="${{ github.event.inputs.SUFFIX }}"
           ANDROID_VERSION="${{ needs.get-config.outputs.ANDROID_VERSION }}"
           FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
+
           for path in \
             kernel_platform/common/scripts/setlocalversion \
             kernel_platform/msm-kernel/scripts/setlocalversion \
             kernel_platform/external/dtc/scripts/setlocalversion; do
+
             [ -f "$path" ] || continue
+
             if [ "$FAST_BUILD" = "true" ]; then
               sed -i "s/^res=.*/res=\"-${ANDROID_VERSION}-${SUFFIX}\"/" "$path"
             else
+              # Use official script for compilation, may be limited by special symbol count when using build_with_bazel, must be less than 4
               sed -i '/^res=/a res=$(echo "$res" | sed -E '\''s/(-[0-9]+-o-)?-g[0-9a-f]{7,}.*$//'\'')' "$path"
               sed -i "\$s|echo \"\\\$res\"|echo \"\$res-${SUFFIX}\"|" "$path"
             fi
           done
           git add -A
           git commit -m "Updated kernel version suffix"
+
       - name: Generate random kernel suffix if SUFFIX is empty
         if: ${{ github.event.inputs.SUFFIX == '' }}
         run: |
           cd kernel_workspace
           ANDROID_VERSION="${{ needs.get-config.outputs.ANDROID_VERSION }}"
           FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
+
           RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
           RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
           RANDOM_SUFFIX="${RANDOM_DIGIT}-o-g${RANDOM_HASH}"
+
           for path in \
             kernel_platform/common/scripts/setlocalversion \
             kernel_platform/msm-kernel/scripts/setlocalversion \
             kernel_platform/external/dtc/scripts/setlocalversion; do
+
             [ -f "$path" ] || continue
+
             if [ "$FAST_BUILD" = "true" ]; then
               sed -i "s/^res=.*/res=\"-${ANDROID_VERSION}-${RANDOM_SUFFIX}\"/" "$path"
             else
@@ -225,56 +231,53 @@ jobs:
           done
           git add -A
           git commit -m "Fix: inject random kernel suffix"
-      - name: Add KernelSU-SukiSU Ultra
+
+      - name: Download manifest to .repo/manifests
+        id: fetch_manifest
         run: |
-          cd kernel_workspace/kernel_platform
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          cd ./KernelSU
-          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10606)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          export KSU_VERSION=$KSU_VERSION
-          sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile      
-      - name: Apply Patches SukiSU Ultra
+          feil="${{ github.event.inputs.FEIL }}"
+          cpu="${{ needs.get-config.outputs.CPU }}"
+          mkdir -p .repo/manifests
+          echo "Downloading manifest $feil.xml from branch oneplus/$cpu..."
+          curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/$feil.xml"
+          mv "$feil.xml" ".repo/manifests/${feil}.xml"
+
+      - name: Apply VFS
+        if: ${{ github.event.inputs.VFS == 'true' }}
         run: |
-          cd kernel_workspace
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}
+          cd kernel_workspace/kernel_platform/common
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
-          cd kernel_platform
-          echo "Applying SUSFS patch"
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch ./common/
-          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            echo "Applying ZRAM patch"
-            cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux
-            cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib
-            cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto
-            cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
-            echo "ZRAM patch completed"
-          fi
-          cd ./common
-          GKI_V="${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}"
-          SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
-          if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-            echo "Fixing legacy issues for kernel versions 5.15.0 to 5.15.123"
-            curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
-            patch -p1 < fix_5.15.legacy.patch
-            echo "fix_5.15_patch completed"
-          fi
-          if [[ "${{ github.event.inputs.FEIL }}" =~ ^(oneplus_13|oneplus_ace5_pro|oneplus_pad_2_pro|oneplus_pad_3)$ ]]; then
-            echo "Fixing SUSFS issues for kernel version 6.6 on some models"
-            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch
-            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch
-          fi
-          patch -p1 < 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch || true
-          echo "SUSFS patch completed"
+          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
+          echo "Applying vfs patch"
+          patch -p1 -F 3 < syscall_hooks.patch
+          echo "vfs_patch completed"
+          rm -rf ../../SukiSU_patch
+
+      - name: Apply ZRAM
+        if: ${{ github.event.inputs.ZRAM == 'true' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4kd.patch ./
+          echo "Applying lz4kd patch"
+          patch -p1 -F 3 < lz4kd.patch || true
+          echo 'lz4kd_patch completed'
+          cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4k_oplus.patch ./
+          echo "Applying lz4k_oplus patch"
+          patch -p1 -F 3 < lz4k_oplus.patch || true
+          echo 'lz4k_oplus_patch completed'
+          rm -rf ../../SukiSU_patch
+
       - name: Apply Hide Stuff Patches
         run: |
           cd kernel_workspace/kernel_platform/common
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
           echo "Applying hide app patch"
           patch -p1 -F 3 < 69_hide_stuff.patch
-          echo "Hide app patch completed"
+          echo "hide_app_patch completed"
+          rm -rf ../../SukiSU_patch
+
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ needs.get-config.outputs.KERNEL_VERSION == '6.6' }}
         run: |
@@ -283,61 +286,31 @@ jobs:
           wget https://github.com/Numbersf/Action-Build/raw/SukiSU-Ultra/patches/hmbird_patch.patch
           echo "Applying OGKI to GKI conversion patch"
           patch -p1 -F 3 < hmbird_patch.patch
-          echo "OGKI to GKI patch completed"
-      - name: Apply VFS
-        if: ${{ github.event.inputs.VFS == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
-          echo "Applying VFS patch"
-          patch -p1 -F 3 < syscall_hooks.patch
-          echo "VFS patch completed"
-      - name: Apply ZRAM
-        if: ${{ github.event.inputs.ZRAM == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4kd.patch ./
-          echo "Applying LZ4KD patch"
-          patch -p1 -F 3 < lz4kd.patch || true
-          echo "LZ4KD patch completed"
-          cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4k_oplus.patch ./
-          echo "Applying LZ4K OPlus patch"
-          patch -p1 -F 3 < lz4k_oplus.patch || true
-          echo "LZ4K OPlus patch completed"
+          echo "OGKI_to_GKI_patch completed"
+
       - name: Add Configuration Settings
         run: |
           cd kernel_workspace/kernel_platform
           CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
-          echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+
+          # VFS configuration
           if [ "${{ github.event.inputs.VFS }}" = "true" ]; then
             echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
           else
             echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
           fi
-          if [ "${{ github.event.inputs.VFS }}" = "true" ]; then
-            echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
-          else
-            echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
-          fi
-          echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
+
+          # BBR configuration
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
+          echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
+          echo "CONFIG_TCP_CONG_HTCP=y" >> "$CONFIG_FILE"
+
+          # LZ4KD configuration
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
@@ -346,26 +319,20 @@ jobs:
             echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$CONFIG_FILE"
             echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
           fi
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
-          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_CDG=y" >> "$CONFIG_FILE"
-          echo "CONFIG_DEFAULT_BBR=y" >> "$CONFIG_FILE"
-          echo "CONFIG_NET_SCH_DEFAULT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
+
+          # Additional configurations
+          echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
           echo "CONFIG_DEFAULT_FQ=y" >> "$CONFIG_FILE"
           echo "CONFIG_DEFAULT_NET_SCH=\"fq\"" >> "$CONFIG_FILE"
           echo "CONFIG_NET_SCH_SFQ=y" >> "$CONFIG_FILE"
           echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$CONFIG_FILE"
           echo "CONFIG_NET_SCH_TBF=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_HTCP=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_FASTOPEN=y" >> "$CONFIG_FILE"
-          echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$CONFIG_FILE"
@@ -375,37 +342,10 @@ jobs:
           echo "CONFIG_BOEFFLA_WL_BLOCKER=y" >> "$CONFIG_FILE"
           echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> "$CONFIG_FILE"
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "$CONFIG_FILE"
+
+          # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
-      - name: Disable Blacklisted Modules
-        run: |
-          echo "Disabling blacklisted modules in gki_defconfig and Kconfig files..."
-          cd "$CONFIG/kernel_platform"
-          MODULES=(
-            "CONFIG_EXT4_INODE_TEST"
-            "CONFIG_F_FS_IPC_LOG"
-            "CONFIG_HUNG_TASK_ENH"
-            "CONFIG_IIO_TEST_FORMAT"
-            "CONFIG_OPLUS_BSP_SIGKILL_DIAGNOSIS"
-            "CONFIG_OPLUS_LOCK_TORTURE"
-            "CONFIG_SOC_TOPOLOGY_TEST"
-            "CONFIG_SOC_UTILS_TEST"
-          )
-          DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-          for MODULE in "${MODULES[@]}"; do
-            sed -i "/${MODULE}=/d" "$DEFCONFIG"
-            echo "${MODULE}=n" >> "$DEFCONFIG"
-          done
-          find . -name Kconfig -exec sed -i \
-            -e 's/CONFIG_EXT4_INODE_TEST=[ym]/CONFIG_EXT4_INODE_TEST=n/' \
-            -e 's/CONFIG_F_FS_IPC_LOG=[ym]/CONFIG_F_FS_IPC_LOG=n/' \
-            -e 's/CONFIG_HUNG_TASK_ENH=[ym]/CONFIG_HUNG_TASK_ENH=n/' \
-            -e 's/CONFIG_IIO_TEST_FORMAT=[ym]/CONFIG_IIO_TEST_FORMAT=n/' \
-            -e 's/CONFIG_OPLUS_BSP_SIGKILL_DIAGNOSIS=[ym]/CONFIG_OPLUS_BSP_SIGKILL_DIAGNOSIS=n/' \
-            -e 's/CONFIG_OPLUS_LOCK_TORTURE=[ym]/CONFIG_OPLUS_LOCK_TORTURE=n/' \
-            -e 's/CONFIG_SOC_TOPOLOGY_TEST=[ym]/CONFIG_SOC_TOPOLOGY_TEST=n/' \
-            -e 's/CONFIG_SOC_UTILS_TEST=[ym]/CONFIG_SOC_UTILS_TEST=n/' \
-            {} \; || true
-          echo "Blacklisted modules disabled successfully"
+
       - name: Add sched_ext
         if: ${{ github.event.inputs.SCHED == 'true' }}
         run: |
@@ -414,20 +354,18 @@ jobs:
           cp -r ./sched_ext/* ./common/kernel/sched
           rm -rf ./sched_ext/.git
           cd common/kernel/sched
+
       - name: Enable lto=thin For FAST
-        if: ${{ (needs.get-config.outputs.KERNEL_VERSION == '5.10' || needs.get-config.outputs.KERNEL_VERSION == '5.15' || needs.get-config.outputs.KERNEL_VERSION == '6.6') && github.event.inputs.FAST_BUILD == 'true' }}
+        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform
           DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-          if [ ! -f "$DEFCONFIG" ]; then
-            echo "Error: $DEFCONFIG not found"
-            exit 1
-          fi
           echo "Enabling ThinLTO in $DEFCONFIG"
           sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
+
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
@@ -439,10 +377,10 @@ jobs:
           elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
             export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r450784e/bin:$PATH"
           elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
-            export PATH="$GITHUB_WORKSPACE/kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin:$PATH"
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin:$PATH"
           else
-            echo "⚠️ Current kernel version \"$KERNEL_VERSION\" has no corresponding clang toolchain, falling back to official build script (custom kernel suffix may cause issues)"
-            echo "Consider disabling FAST_BUILD or adding clang path for this version"
+            echo "⚠️ Current kernel version \"$KERNEL_VERSION\" has no corresponding clang toolchain, falling back to official build script (custom kernel suffix may cause suffix mismatch)"
+            echo "Consider adding clang path for this version"
             cd kernel_workspace
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
@@ -460,30 +398,35 @@ jobs:
           fi
           make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
           make -j$(nproc --all) O=out $MAKE_ARGS
-      - name: Enable lto=thin For Fallback
-        if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
-        run: |
-          cd kernel_workspace/kernel_platform
-          DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-          if [ ! -f "$DEFCONFIG" ]; then
-            echo "Error: $DEFCONFIG not found"
-            exit 1
-          fi
-          echo "Enabling ThinLTO in $DEFCONFIG for fallback build"
-          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
+
       - name: Fallback Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
         run: |
           cd kernel_workspace
+          DEFCONFIG=./kernel_platform/common/arch/arm64/configs/gki_defconfig
+          echo "Enabling ThinLTO in $DEFCONFIG"
+          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
           if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get-config.outputs.CPU }}" == "sm7675" ]]; then
             LTO=thin ./kernel_platform/build_with_bazel.py -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           else
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           fi
+
+      - name: Apply patch_linux and replace Image
+        if: ${{ github.event.inputs.KPM == 'true' }}
+        run: |
+          cd kernel_workspace/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
+          curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
+          chmod +x patch_linux
+          ./patch_linux
+          rm -f Image
+          mv oImage Image
+          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
+
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
@@ -508,7 +451,7 @@ jobs:
           else
             image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
             if [ -n "$image_path" ]; then
-              echo "Using unified path compiled with make, no need to copy"
+              echo "Using unified path for make compilation, no need to copy"
             fi
           fi
           if [ -n "$image_path" ] && [ -f "$image_path" ]; then
@@ -537,92 +480,19 @@ jobs:
               fi
             done
           fi
-      - name: Apply patch_linux and replace Image
-        if: ${{ github.event.inputs.KPM == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
-          curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
-          chmod +x patch_linux
-          ./patch_linux
-          rm -f Image
-          mv oImage Image
-          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
-      - name: Download Latest SUSFS Module from CI
-        if: ${{ github.event.inputs.SUSFS_CI == 'CI' }}
-        continue-on-error: true
-        run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch v1.5.2+"
-          else
-            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-            if [ -n "$ARTIFACT_URL" ]; then
-              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
-            else
-              echo "Failed to fetch artifact URL"
-            fi
-          fi
-      - name: Download Latest SUSFS Module from Release
-        if: ${{ github.event.inputs.SUSFS_CI == 'Release' }}
-        continue-on-error: true
-        run: |
-          wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
-          cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
-      - name: Download Latest SukiSU-Ultra APK from CI
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          run_id=$(gh api \
-            "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=main&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id' || echo "")
-          if [[ -z "$run_id" ]]; then
-            echo "⚠️ No successful workflow run found. Skipping artifact download."
-          else
-            artifact_url=$(gh api \
-              "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$run_id/artifacts" | \
-              jq -r '.artifacts[] | select(.name == "manager") | .archive_download_url' | head -n1)
-            if [[ -z "$artifact_url" ]]; then
-              echo "⚠️ No 'manager' artifact found in run $run_id. Skipping download."
-            else
-              echo "✅ Downloading from: $artifact_url"
-              curl -fL -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
-              unzip -j manager.zip "*.apk" -d ./AnyKernel3/
-            fi
-          fi
+
       - name: Set zip suffix
         id: suffix
         run: |
           echo "value=${{ github.event.inputs.VFS == 'true' && '_VFS' || '' }}${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
+
       - name: Auto map FEIL to Android version by manifest
         id: feil_clean
         run: |
           feil="${{ github.event.inputs.FEIL }}"
           cpu="${{ needs.get-config.outputs.CPU }}"
           xml=".repo/manifests/${feil}.xml"
-          if [ ! -f "$xml" ]; then
-            echo "Manifest $xml not found,This is expected behavior,not an error.Attempting to download from branch oneplus/$cpu..."
-            mkdir -p .repo/manifests
-            git clone --depth=1 --branch oneplus/$cpu https://github.com/OnePlusOSS/kernel_manifest.git repo_tmp || {
-              echo "Failed to clone branch oneplus/$cpu"
-              echo "value=${feil}_AndroidUnknown" >> "$GITHUB_OUTPUT"
-              exit 0
-            }
-            if [ -f "repo_tmp/${feil}.xml" ]; then
-              mv "repo_tmp/${feil}.xml" "$xml"
-            else
-              echo "Manifest file ${feil}.xml not found in branch oneplus/$cpu"
-              echo "value=${feil}_AndroidUnknown" >> "$GITHUB_OUTPUT"
-              rm -rf repo_tmp
-              exit 0
-            fi
-            rm -rf repo_tmp
-          fi
-          echo "Manifest $xml found."
+          cd $GITHUB_WORKSPACE
           feil_base=$(echo "$feil" | sed -E 's/_[a-z]$//')
           revision_full=$(grep -oP '<project[^>]*name="android_kernel[^"]*"[^>]*revision="\K[^"]+' "$xml" | head -n1 || true)
           if [ -n "$revision_full" ]; then
@@ -636,11 +506,13 @@ jobs:
             clean_feil="${feil_base}_AndroidUnknown"
           fi
           echo "value=$clean_feil" >> "$GITHUB_OUTPUT"
+
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.feil_clean.outputs.value }}${{ steps.suffix.outputs.value }}
+          name: AnyKernel3_Ultra_${{ steps.feil_clean.outputs.value }}${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
+
       - name: Download And Unzip ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         run: |
@@ -674,9 +546,10 @@ jobs:
               echo "Source and target are the same, skipping copy"
             fi
           else
-            echo "ZRAM module file zram.ko not found, build may fail"
+            echo "zram.ko file not found, build may fail"
             exit 1
           fi
+
       - name: Upload ZRAM Module
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         uses: actions/upload-artifact@v4
