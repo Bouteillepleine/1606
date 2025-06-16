@@ -301,7 +301,24 @@ jobs:
       - name: Apply VFS
         if: ${{ github.event.inputs.VFS == 'true' }}
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace
+          echo "Listing contents of kernel_workspace:"
+          ls -la
+          if [ ! -d "SukiSU_patch" ]; then
+            echo "SukiSU_patch directory not found. Clone may have failed."
+            exit 1
+          fi
+          echo "SukiSU_patch directory exists. Listing contents:"
+          ls -la SukiSU_patch
+          if [ ! -d "SukiSU_patch/hooks" ]; then
+            echo "hooks directory not found in SukiSU_patch."
+            exit 1
+          fi
+          if [ ! -f "SukiSU_patch/hooks/syscall_hooks.patch" ]; then
+            echo "syscall_hooks.patch not found in SukiSU_patch/hooks."
+            exit 1
+          fi
+          cd kernel_platform/common
           cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
           echo "Applying vfs patch"
           patch -p1 -F 3 < syscall_hooks.patch || true
