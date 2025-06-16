@@ -138,7 +138,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update && sudo apt upgrade -y
-          sudo apt install -y python3 git curl ccache
+          sudo apt install -y python3 git curl ccache make bc flex bison libelf-dev
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -185,14 +185,11 @@ jobs:
           SUFFIX="${{ github.event.inputs.SUFFIX }}"
           ANDROID_VERSION="${{ needs.get-config.outputs.ANDROID_VERSION }}"
           FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
-
           for path in \
             kernel_platform/common/scripts/setlocalversion \
             kernel_platform/msm-kernel/scripts/setlocalversion \
             kernel_platform/external/dtc/scripts/setlocalversion; do
-
             [ -f "$path" ] || continue
-
             if [ "$FAST_BUILD" == "true" ]; then
               sed -i "s/^res=.*/res=\"-${ANDROID_VERSION}-${SUFFIX}\"/" "$path"
             else
@@ -207,41 +204,37 @@ jobs:
       - name: Generate random kernel suffix if SUFFIX is empty
         if: ${{ github.event.inputs.SUFFIX == '' }}
         run: |
-            cd kernel_workspace
-            ANDROID_VERSION="${{ needs.get-config.outputs.ANDROID_VERSION }}"
-            FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
-
-            RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
-            RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
-            RANDOM_SUFFIX="${RANDOM_DIGIT}-o-g${RANDOM_HASH}"
-
-            for path in \
-              kernel_platform/common/scripts/setlocalversion \
-              kernel_platform/msm-kernel/scripts/setlocalversion \
-              kernel_platform/external/dtc/scripts/setlocalversion; do
-
-              [ -f "$path" ] || continue
-
-              if [ "$FAST_BUILD" = "true" ]; then
-                sed -i "s/^res=.*/res=\"-${ANDROID_VERSION}-${RANDOM_SUFFIX}\"/" "$path"
-              else
-                sed -i '/^res=/a res=$(echo "$res" | sed -E '\''s/(-[0-9]+-o-)?-g[0-9a-f]{7,}//'\'')' "$path"
-                sed -i "\$s|echo \"\\\$res\"|echo \"\$res-${RANDOM_SUFFIX}\"|" "$path"
-              fi
-            done
-            git add -A
-            git commit -m "Fix: inject random kernel suffix"
+          cd kernel_workspace
+          ANDROID_VERSION="${{ needs.get-config.outputs.ANDROID_VERSION }}"
+          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
+          RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
+          RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
+          RANDOM_SUFFIX="${RANDOM_DIGIT}-o-g${RANDOM_HASH}"
+          for path in \
+            kernel_platform/common/scripts/setlocalversion \
+            kernel_platform/msm-kernel/scripts/setlocalversion \
+            kernel_platform/external/dtc/scripts/setlocalversion; do
+            [ -f "$path" ] || continue
+            if [ "$FAST_BUILD" = "true" ]; then
+              sed -i "s/^res=.*/res=\"-${ANDROID_VERSION}-${RANDOM_SUFFIX}\"/" "$path"
+            else
+              sed -i '/^res=/a res=$(echo "$res" | sed -E '\''s/(-[0-9]+-o-)?-g[0-9a-f]{7,}//'\'')' "$path"
+              sed -i "\$s|echo \"\\\$res\"|echo \"\$res-${RANDOM_SUFFIX}\"|" "$path"
+            fi
+          done
+          git add -A
+          git commit -m "Fix: inject random kernel suffix"
 
       - name: Download manifest to .repo/manifests
         id: fetch_manifest
         run: |
           feil="${{ github.event.inputs.FEIL }}"
           cpu="${{ needs.get-config.outputs.CPU }}"
-          mkdir -p .repo/mainfests
+          mkdir -p .repo/manifests
           echo "Downloading manifest $feil.xml from branch oneplus/$cpu..."
           curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/$feil.xml"
-          mv "$feil.xml" ".repo/mainfests/${feil}.xml"        
-            
+          mv "$feil.xml" ".repo/manifests/${feil}.xml"
+
       - name: Add KernelSU-SukiSU Ultra
         run: |
           cd kernel_workspace/kernel_platform
@@ -251,38 +244,34 @@ jobs:
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           export KSU_VERSION=$KSU_VERSION
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
-      
+
       - name: Apply Patches SukiSU Ultra
         run: |
           cd kernel_workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
           cd kernel_platform
-          echo "Applying susfs patch"  # 正在打susfs补丁
+          echo "Applying susfs patch"
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-      
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            echo "Applying zram patch"  
+            echo "Applying zram patch"
             cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux
             cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib
             cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto
             cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
-            echo "zram_patch completed"  
+            echo "zram_patch completed"
           fi
-      
           cd ./common
           GKI_V="${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}"
           SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
-      
           if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-            echo "Fixing some legacy issues that may exist in kernel versions 5.15.0 to 5.15.123" 
+            echo "Fixing some legacy issues that may exist in kernel versions 5.15.0 to 5.15.123"
             curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
-            patch -p1 < fix_5.15.legacy.patch
-            echo "fix_5.15_patch completed"  
+            patch -p1 < fix_5.15.legacy.patch || true
+            echo "fix_5.15_patch completed"
           fi
-          KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
           feil="${{ github.event.inputs.FEIL }}"
           TRUSTY_EXISTS="false"
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
@@ -290,83 +279,63 @@ jobs:
               TRUSTY_EXISTS="true"
             fi
             echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
-      
             if [[ "$TRUSTY_EXISTS" == "false" ]]; then
-              echo "Fixing susfs issues for some models with kernel version 6.6"  
-              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ KERNEL_VERSION }}.patch
-              sed -i '/#include <trace/hooks/fs.h>/d' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ KERNEL_VERSION }}.patch
+              echo "Fixing susfs issues for some models with kernel version 6.6"
+              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${KERNEL_VERSION}.patch
+              sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${KERNEL_VERSION}.patch
             fi
           fi
           patch -p1 < 50_add_susfs_in_gki-${{ needs.get-config.outputs.ANDROID_VERSION }}-${{ needs.get-config.outputs.KERNEL_VERSION }}.patch || true
-          echo "susfs_patch completed"  
-      
-      - name: Apply Hide Stuff Patches
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/69_hide_stuff.patch ./
-          echo "Applying hide application patch" 
-          patch -p1 -F 3 < 69_hide_stuff.patch
-          echo "hide_application_patch completed"
-            
-      - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
-        if: ${{ needs.get-config.outputs.KERNEL_VERSION == '6.6' }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
-          wget https://github.com/Numbersf/Action-Build/raw/SukiSU-Ultra/patches/hmbird_patch.patch
-          echo "Applying OGKI to GKI conversion patch"  
-          patch -p1 -F 3 < hmbird_patch.patch
-          echo "OGKI_to_GKI_patch completed"  
-      
-      - name: Apply VFS
-        if: ${{ github.event.inputs.VFS == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
-          echo "Applying vfs patch"  
-          patch -p1 -F 3 < syscall_hooks.patch
-          echo "vfs_patch completed"  
-
-      - name: Apply VFS
-        if: ${{ github.event.inputs.VFS == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-            cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
-            echo "Applying vfs patch"
-            patch -p1 -F 3 < syscall_hooks.patch
-            echo "vfs_patch completed"
-
-      - name: Apply ZRAM
-        if: ${{ github.event.inputs.ZRAM == 'true' }}
-        run: |
-            cd kernel_workspace/kernel_platform/common
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
-            cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4kd.patch ./
-            echo "Applying lz4kd patch"
-            patch -p1 -F 3 < lz4kd.patch || true
-            echo 'lz4kd_patch completed'
-            cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4k_oplus.patch
-            echo "Applying lz4k_oplus patch"
-            patch -p1 -F 3 <lz4k_oplus.patch || true
-            echo 'lz4k_oplus_patch completed'
-            rm -rf ../../SukiSU_patch
+          echo "susfs_patch completed"
 
       - name: Apply Hide Stuff Patches
         run: |
           cd kernel_workspace/kernel_platform/common
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
-          echo "Applying hide app patch"
-            cp patch -p1 -F 3 < 69_patch.patch
-          echo "hide_app_patch completed"
-            cp rm -rf ../../SukiSU_patch      
+          echo "Applying hide application patch"
+          patch -p1 -F 3 < 69_hide_stuff.patch || true
+          echo "hide_application_patch completed"
+          rm -rf ../../SukiSU_patch
+
+      - name: Apply VFS
+        if: ${{ github.event.inputs.VFS == 'true' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
+          echo "Applying vfs patch"
+          patch -p1 -F 3 < syscall_hooks.patch || true
+          echo "vfs_patch completed"
+
+      - name: Apply ZRAM
+        if: ${{ github.event.inputs.ZRAM == 'true' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4kd.patch ./
+          echo "Applying lz4kd patch"
+          patch -p1 -F 3 < lz4kd.patch || true
+          echo "lz4kd_patch completed"
+          cp ../../SukiSU_patch/other/zram/zram_patch/${{ needs.get-config.outputs.KERNEL_VERSION }}/lz4k_oplus.patch ./
+          echo "Applying lz4k_oplus patch"
+          patch -p1 -F 3 < lz4k_oplus.patch || true
+          echo "lz4k_oplus_patch completed"
+          rm -rf ../../SukiSU_patch
+
+      - name: Add sched_ext
+        if: ${{ github.event.inputs.SCHED == 'true' }}
+        run: |
+          cd kernel_workspace
+          git clone https://github.com/HanKuCha/sched_ext.git
+          cp -r ./sched_ext/* ./common/kernel/sched
+          rm -rf ./sched_ext
+          cd ./common/kernel/sched
 
       - name: Add Configuration Settings
         run: |
           cd kernel_workspace/kernel_platform
           CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
-
           # VFS configuration
           if [ "${{ github.event.inputs.VFS }}" == "true" ]; then
             echo "CONFIG_KSU_SUSFS_SUSFS_SUS=n" >> "$CONFIG_FILE"
@@ -374,7 +343,6 @@ jobs:
           else
             echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
           fi
-
           # BBR configuration
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
@@ -382,7 +350,6 @@ jobs:
           echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_HTCP=y" >> "$CONFIG_FILE"
-
           # LZ4KD configuration
           if [ "${{ github.event.inputs.ZRAM }}" == "true" ]; then
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
@@ -392,7 +359,6 @@ jobs:
             echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$CONFIG_FILE"
             echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
           fi
-
           # Additional configurations
           echo "CONFIG_TPMFS_XATTR=y" >> "$CONFIG_FILE"
           echo "CONFIG_TPMFS_POSIX_ACL=y" >> "$CONFIG_FILE"
@@ -415,90 +381,80 @@ jobs:
           echo "CONFIG_BOEFFLA_WL_BLOCKER=y" >> "$CONFIG_FILE"
           echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> "$CONFIG_FILE"
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=m" >> "$CONFIG_FILE"
-
           # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
-
-      - name: Add sched_ext
-        if: ${{ github.event.inputs.SCHED == 'true' }}
-        run: |
-            cd kernel_worksphase
-            git clone https://github.com/HanKuCha/sched_ext.git
-            cp -r ./sched_ext/* ././common/kernel/sched
-            rm -rf rm ./sched_ext
-            cd ./common/kernel/sched
 
       - name: Enable lto=thin For FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
-            cd kernel_worksphase
-            DEFCONFIG=./kernel_platform/common/arch/arm64/configs/gki_defconfig
-            echo "Enabling ThinLTO in $DEFCONFIG"
-            sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-            sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-            sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-            grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
+          cd kernel_workspace
+          DEFCONFIG=./kernel_platform/common/arch/arm64/configs/gki_defconfig
+          echo "Enabling ThinLTO in $DEFCONFIG"
+          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
 
       - name: Build Kernel FAST
-        if: ${{ github.event.FAST_BUILD == 'true' }}
+        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
-            KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
-            if [[ "$KERNEL_VERSION" == "6.6" ]]; then
-              export PATH="$GITHUB_WORKSPACE/kernel_worksphase/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r510928/bin:$PATH"
-            elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
-              export PATH="$GITHUB_WORKSPACE/kernel_worksphase/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r487747/bin:$PATH"
-            elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
-              export PATH="$GITHUB_WORKSPACE/kernel_worksphase/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r450784/bin:$PATH"
-            elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
-              export PATH="$GITHUB_WORKSPACE/kernel_worksphase/kernel_patches/prebuilts-master/clang/host/linux-x86_64/clang-r416183b/bin:$PATH"
-            else
-              echo "⚠️ Current kernel version \"$KERNEL_VERSION\" has no corresponding build script"
-              echo "Consider disabling FAST_BUILD or adding clang path for this version"
-              cd kernel_worksphase
-              LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
-              ./platform/lts/build/oplus_build_kernel.sh ${{ needs.get-configurations.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
-              exit 0
-            fi
-            ccache clang -v
-            sudo apt install -y libelf-dev
-            cd kernel_worksphase/project_platform/common
-            MAKE_ARGS="LLVM=1 ARCH=x86_64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
-            RUSTC=../../prebuilts/rust/linux-x86_64/1.73.0b/bin/rustc \
-            PAHOLE=../../prebuilts/kernel-build-tools/linux-x86_64/bin/pahole \
-            LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
-            if [[ "$KERNEL_VERSION" == "5.10" ]]; then
-              MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
-            fi
-            make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
-            make -j$(nproc --all) O=out $MAKE_ARGS
+          KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
+          if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r510928/bin:$PATH"
+          elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r487747/bin:$PATH"
+          elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts/clang/host/linux-x86_64/clang-r450784/bin:$PATH"
+          elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_patches/prebuilts-master/clang/host/linux-x86_64/clang-r416183b/bin:$PATH"
+          else
+            echo "⚠️ Current kernel version \"$KERNEL_VERSION\" has no corresponding build script"
+            echo "Consider disabling FAST_BUILD or adding clang path for this version"
+            cd kernel_workspace
+            LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            ./platform/lts/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+            exit 0
+          fi
+          ccache clang -v
+          sudo apt install -y libelf-dev
+          cd kernel_workspace/kernel_platform/common
+          MAKE_ARGS="LLVM=1 ARCH=x86_64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
+          RUSTC=../../prebuilts/rust/linux-x86_64/1.73.0b/bin/rustc \
+          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86_64/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
+          if [[ "$KERNEL_VERSION" == "5.10" ]]; then
+            MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
+          fi
+          make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
+          make -j$(nproc --all) O=out $MAKE_ARGS
 
       - name: Fallback Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
         run: |
-            cd kernel_worksphase
-            DEFCONFIG=./kernel_platform/project_common/arch/arm64/configs/gki_defconfig
-            echo "Enabling ThinLTO in $DEFCONFIG"
-            sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-            sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-            sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-            grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG'" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
-            if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get_config.outputs.CPU }}" == "sm7675" ]]; then
-              LTO=thin ./kernel_platform/build_with_bazel.py -t ${{ needs.get_config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
-            else
-              LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
-              ./platform/lts/build/lts_build_kernl.sh ${{ needs.get-configurations.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
-            fi
+          cd kernel_workspace
+          DEFCONFIG=./kernel_platform/common/arch/arm64/configs/gki_defconfig
+          echo "Enabling ThinLTO in $DEFCONFIG"
+          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
+          if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get-config.outputs.CPU }}" == "sm7675" ]]; then
+            LTO=thin ./kernel_platform/build_with_bazel.py -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+          else
+            LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            ./platform/lts/build/lts_build_kernl.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+          fi
 
       - name: Apply patch_linux and replace Image
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
-            cd kernel_worksphase/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
-            curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.github.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
-            chmod +x patch_linux
-            ./patch_linux
-            rm -f Image
-            mv oImage Image
-            cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
+          cd kernel_workspace/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
+          curl -LO --retry 5 --retry-delay 2 --retry-connrefused https://raw.github.com/Numbersf/Action-Build/SukiSU-Ultra/patches/patch_linux
+          chmod +x patch_linux
+          ./patch_linux
+          rm -f Image
+          mv oImage Image
+          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
 
       - name: Make AnyKernel3
         run: |
@@ -507,13 +463,13 @@ jobs:
           echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
           git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" --depth=1
           rm -rf ./AnyKernel3/.git
-          dir1="kernel_worksphase/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
-          dir2="kernel_worksphase/kernel_platform/bazel-out/k8-fastbuild/bin/msm-kernel/${{ needs.get-config.outputs.CPUD }}_gki_kbuild_mixed_tree/"
-          dir3="kernel_worksphase/kernel_platform/out/msm-${{ needs.get-config.outputs.CPUD }}-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
-          dir4="kernel_worksphase/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
-          dir5="kernel_worksphase/kernel_platform/out/msm-${{ needs.get-config.outputs.CPUD }}-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
+          dir1="kernel_workspace/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
+          dir2="kernel_workspace/kernel_platform/bazel-out/k8-fastbuild/bin/msm-kernel/${{ needs.get-config.outputs.CPUD }}_gki_kbuild_mixed_tree/"
+          dir3="kernel_workspace/kernel_platform/out/msm-${{ needs.get-config.outputs.CPUD }}-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
+          dir4="kernel_workspace/kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
+          dir5="kernel_workspace/kernel_platform/out/msm-${{ needs.get-config.outputs.CPUD }}-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
           target1="./AnyKernel3/"
-          target2="./kernel_worksphase/kernel"
+          target2="./kernel_workspace/kernel"
           if find "$dir1" -name "Image" | grep -q "Image"; then
             image_path="$dir1"Image
           elif find "$dir2" -name "Image" | grep -q "Image"; then
@@ -525,7 +481,7 @@ jobs:
           elif find "$dir5" -name "Image" | grep -q "Image"; then
             image_path="$dir5"Image
           else
-            image_path=$(find "./kernel_worksphase/kernel_platform/common/out/" -name "Image" | head -n 1)
+            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
             if [ -n "$image_path" ]; then
               echo "Using unified path for make compilation, no need to copy"
             fi
