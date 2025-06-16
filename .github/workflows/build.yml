@@ -196,6 +196,12 @@ jobs:
           else
             echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
           fi
+          
+          if [ "${{ inputs.model }}" == "OPAce5Pro" ] || [ "${{ inputs.model }}" == "OP13" ]; then
+            curl -Ls https://github.com/schqiushui/android_kernel_common_oneplus_sm8750/commit/5d2cc9706a35f5e4b5dbbd5d247487225a46e02c.patch | patch -p1 -F 3
+          else
+            echo "Not OPAce5Pro / OP13, skipping fengchi patch"
+          fi
 
       - name: Apply KSUN Hooks
         run: |
@@ -208,7 +214,7 @@ jobs:
       - name: Apply Hide Stuff Patches
         run: |
           echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel platform/common"
+          cd "$CONFIG/kernel_platform/common"
           # Apply additional patch
           cp ../../../kernel_patches/69_hide_stuff.patch ./
           patch -p1 -F 3 < 69_hide_stuff.patch
@@ -260,7 +266,7 @@ jobs:
           
           echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
-
+          
           echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -360,7 +366,7 @@ jobs:
             cp -r ./sched_ext/* ./common/kernel/sched
             rm -rf ./sched_ext/.git
             cd common/kernel/sched
-          fi         
+          fi
 
       - name: Run sed and perl Commands
         run: |
