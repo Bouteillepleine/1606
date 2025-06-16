@@ -1,4 +1,4 @@
-name: 13r
+name: OnePlus 13R
 on:
   workflow_dispatch:
     inputs:
@@ -138,7 +138,7 @@ jobs:
       - name: Initialize repo and sync
         run: |
          mkdir kernel_workspace && cd kernel_workspace
-         repo init -u https://github.com/giang/kernel_manifest.git -b refs/heads/oneplus/${{ inputs.CPU }} -m ${{ inputs.FEIL }}.xml --depth=1
+         repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ inputs.CPU }} -m ${{ inputs.FEIL }}.xml --depth=1
          repo --trace sync -c -j$(nproc --all) --no-tags
          rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
@@ -168,7 +168,7 @@ jobs:
            cd ./common
            
            MODEL="${{ inputs.FEIL }}"
-           if { [[ "$MODEL" =~ oneplus_13 || "$MODEL" =~ ace5_pro || ]]; } && [[ "$MODEL" != "oneplus_13t" ]]; then
+           if [[ "$MODEL" =~ oneplus_13 || "$MODEL" =~ ace5_pro ]] && [[ "$MODEL" != "oneplus_13t" ]]; then
              FILENAME="50_add_susfs_in_gki-${{ inputs.ANDROID_VERSION }}-${{ inputs.KERNEL_VERSION }}.patch"
              sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "$FILENAME"
              sed -i '/#include <trace\/hooks\/fs.h>/d' "$FILENAME"
@@ -442,7 +442,7 @@ jobs:
            -> Manual Hooks for Better Hiding
            
            Notes:
-           -> SUS SU Mode 2 will show as disabled or not compatble due to non-kprobe hooks and is not needed anymore!
+           -> SUS SU Mode 2 will show as disabled or not compatible due to non-kprobe hooks and is not needed anymore!
            -> Kernel Flasher is broken with latest susfs, try https://github.com/libxzr/HorizonKernelFlasher!
            
            Module:
