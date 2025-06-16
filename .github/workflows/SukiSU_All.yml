@@ -153,6 +153,7 @@ jobs:
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
           chmod a+x ~/repo
           sudo mv ~/repo /usr/local/bin/repo
+          sudo ln -sf /usr/local/bin/repo /bin/repo
 
       - name: Initialize repo and sync
         run: |
@@ -434,9 +435,7 @@ jobs:
           echo "CONFIG_DEBUG_INFO=n" >> "$CONFIG_FILE"
           echo "CONFIG_BOEFFLA_WL_BLOCKER=y" >> "$CONFIG_FILE"
           echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=m" >> "$CONFIG_FILE"
-          # Remove check_defconfig
-          sed -i 's/check_defconfig//' ./common/build.config.gki
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "$CONFIG_FILE"
 
       - name: Enable lto=thin For FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
@@ -497,8 +496,36 @@ jobs:
           sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
+          # Reapply critical configs after vendor defconfig to prevent overrides
+          CONFIG_DIR=./kernel_platform/out/android14-6.1/msm-kernel
+          if [ -d "$CONFIG_DIR" ]; then
+            CONFIG_FILE="$CONFIG_DIR/.config"
+            if [ -f "$CONFIG_FILE" ]; then
+              echo "Reapplying ThinLTO and custom configs to $CONFIG_FILE"
+              ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                --enable LTO_CLANG_THIN \
+                --enable CC_OPTIMIZE_FOR_PERFORMANCE \
+                --disable LTO_CLANG_FULL \
+                --disable LTO_CLANG_NONE
+              # Reapply VFS configs
+              if [ "${{ github.event.inputs.VFS }}" == "true" ]; then
+                ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                  --disable KSU_SUSFS_SUSFS_SUS \
+                  --enable KSU_MANUAL_HOOK
+              else
+                ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                  --enable KPROBES
+              fi
+              # Run olddefconfig to resolve dependencies
+              make -C kernel_platform/msm-kernel LLVM=1 O="$CONFIG_DIR" olddefconfig
+            fi
+          fi
           if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get-config.outputs.CPU }}" == "sm7675" ]]; then
-            LTO=thin ./kernel_platform/build_with_bazel.py -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+            LTO=thin ./kernel_platform/build_with_bazel.py --lto=thin -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+            if [ ! -d "kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist" ]; then
+              echo "Bazel build failed to produce dist directory. Check logs."
+              exit 1
+            fi
           else
             LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./platform/lts/build/lts_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
@@ -708,4 +735,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel_workspace_debug
-          path: kernel_workspace/
+          path: |
+            kernel_workspace/
+            kernel_workspace/kernel_platform/bazel-out/
