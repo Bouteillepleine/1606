@@ -116,9 +116,9 @@ jobs:
           free -h
 
       - name: Configure Git
-        run: |
-          git config --global user.name "O+builder"
-          git config --global user.email "O+builder@yahoo.com"
+        run: |          
+          git config --global user.name "Numbersf"
+          git config --global user.email "263623064@qq.com"
 
       - name: Show selected inputs debug
         run: |
