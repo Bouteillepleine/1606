@@ -1,4 +1,4 @@
-name: OLD_ OnePlus 13 / Ace 5 Pro / Ace 5 / OnePlus 13R SukiSU Ultra + SUSFS
+name: 13r
 on:
   workflow_dispatch:
     inputs:
