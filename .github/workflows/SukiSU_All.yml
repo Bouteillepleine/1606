@@ -496,38 +496,91 @@ jobs:
           sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
-          # Reapply critical configs after vendor defconfig to prevent overrides
-          CONFIG_DIR=./kernel_platform/out/android14-6.1/msm-kernel
-          if [ -d "$CONFIG_DIR" ]; then
-            CONFIG_FILE="$CONFIG_DIR/.config"
-            if [ -f "$CONFIG_FILE" ]; then
-              echo "Reapplying ThinLTO and custom configs to $CONFIG_FILE"
-              ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
-                --enable LTO_CLANG_THIN \
-                --enable CC_OPTIMIZE_FOR_PERFORMANCE \
-                --disable LTO_CLANG_FULL \
-                --disable LTO_CLANG_NONE
-              # Reapply VFS configs
-              if [ "${{ github.event.inputs.VFS }}" == "true" ]; then
-                ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
-                  --disable KSU_SUSFS_SUSFS_SUS \
-                  --enable KSU_MANUAL_HOOK
-              else
-                ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
-                  --enable KPROBES
-              fi
-              # Run olddefconfig to resolve dependencies
-              make -C kernel_platform/msm-kernel LLVM=1 O="$CONFIG_DIR" olddefconfig
-            fi
+          # Update build.config to use make_goals
+          BUILD_CONFIG=./kernel_platform/build/build.config
+          if [ -f "$BUILD_CONFIG" ]; then
+            echo "Updating MAKE_GOALS to make_goals in $BUILD_CONFIG"
+            sed -i '/^MAKE_GOALS=/d' "$BUILD_CONFIG"
+            echo 'make_goals="modules dtbs"' >> "$BUILD_CONFIG"
           fi
+          # Build with Bazel or lts_build_kernel.sh
           if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get-config.outputs.CPU }}" == "sm7675" ]]; then
             LTO=thin ./kernel_platform/build_with_bazel.py --lto=thin -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+            # Reapply all custom configs to .config after vendor defconfig
+            CONFIG_DIR=./kernel_platform/out/android14-6.1/msm-kernel
+            if [ -d "$CONFIG_DIR" ]; then
+              CONFIG_FILE="$CONFIG_DIR/.config"
+              if [ -f "$CONFIG_FILE" ]; then
+                echo "Reapplying all custom configs to $CONFIG_FILE"
+                ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                  --enable LTO_CLANG_THIN \
+                  --enable CC_OPTIMIZE_FOR_PERFORMANCE \
+                  --enable WQ_POWER_EFFICIENT_DEFAULT \
+                  --enable KPROBES \
+                  --enable TCP_CONG_ADVANCED \
+                  --enable TCP_CONG_BBR \
+                  --enable NET_FQ \
+                  --enable TCP_CONG_HTCP \
+                  --enable TPMFS_XATTR \
+                  --enable TPMFS_POSIX_ACL \
+                  --enable DEFAULT_FQ \
+                  --enable NET_SFQ_SFQ \
+                  --enable NET_SFQ_CODEL \
+                  --enable NET_SQH_TBF \
+                  --enable IPF_NF_TARGET_ECN \
+                  --enable IP_ECN \
+                  --enable TCP_ECN \
+                  --enable IP6V_ECN \
+                  --enable TCP_FASTOPEN \
+                  --enable IP_NF_TARGET_TTL \
+                  --enable IP6_NF_TARGET_HL \
+                  --enable IP6_NF_MATCH_HL \
+                  --enable BOEFFLA_WL_BLOCKER \
+                  --disable LTO_CLANG_FULL \
+                  --disable LTO_CLANG_NONE \
+                  --disable TCP_CONG_BIC \
+                  --disable TCP_CONG_WESTWOOD \
+                  --disable DEBUG_KERNEL \
+                  --disable DYNAMIC_DEBUG \
+                  --disable DEBUG_INFO
+                if [ "${{ github.event.inputs.VFS }}" == "true" ]; then
+                  ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                    --disable KSU_SUSFS_SUSFS_SUS \
+                    --enable KSU_MANUAL_HOOK
+                else
+                  ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                    --enable KPROBES
+                fi
+                if [ "${{ github.event.inputs.ZRAM }}" == "true" ]; then
+                  ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                    --enable CRYPTO_LZ4HC \
+                    --enable CRYPTO_LZ4K \
+                    --enable CRYPTO_LZ4KD \
+                    --enable CRYPTO_8424 \
+                    --enable CRYPTO_LZ4K_OPLUS \
+                    --enable ZRAM_WRITEBACK
+                fi
+                ./kernel_platform/msm-kernel/scripts/config --file "$CONFIG_FILE" \
+                  --set-str DEFAULT_NET_SCH fq
+                # Run olddefconfig and syncconfig
+                make -C kernel_platform/msm-kernel LLVM=1 O="$CONFIG_DIR" olddefconfig
+                make -C kernel_platform/msm-kernel LLVM=1 O="$CONFIG_DIR" syncconfig
+                # Validate config
+                echo "Validating .config against gki_defconfig"
+                ./kernel_platform/msm-kernel/scripts/diffconfig "$CONFIG_FILE" "$DEFCONFIG" > config_diff.txt
+                cat config_diff.txt
+                if [ -s config_diff.txt ]; then
+                  echo "Warning: .config differs from gki_defconfig. Check config_diff.txt in artifacts."
+                fi
+              fi
+            fi
+            # Check for build artifacts
             if [ ! -d "kernel_platform/out/msm-kernel-${{ needs.get-config.outputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist" ]; then
               echo "Bazel build failed to produce dist directory. Check logs."
               exit 1
             fi
           else
-            LTO=thin SYSTEM_DLMK_RE_SIGN=0 BUILD_SYSTEM_DLMK=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./platform/lts/build/lts_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           fi
 
@@ -738,3 +791,4 @@ jobs:
           path: |
             kernel_workspace/
             kernel_workspace/kernel_platform/bazel-out/
+            kernel_workspace/config_diff.txt
