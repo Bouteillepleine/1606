@@ -413,8 +413,8 @@ jobs:
           git clone https://github.com/HanKuCha/sched_ext.git
           cp -r ./sched_ext/* ./common/kernel/sched
           rm -rf ./sched_ext/.git
-          cd common/kernel/sched           
-      
+          cd common/kernel/sched         
+            
       - name: Enable lto=thin For All Builds
         run: |
           cd kernel_workspace/kernel_platform
@@ -445,6 +445,7 @@ jobs:
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
+          #!/usr/bin/bash -e
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
             export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
@@ -457,25 +458,26 @@ jobs:
           else
             echo "⚠️ Kernel version \"$KERNEL_VERSION\" not explicitly supported for FAST build, attempting with ThinLTO"
           fi
-          ccache -v clang
-          sudo apt-get install -y -j$(nproc) libelf-dev
+          # Verify clang version
+          ccache clang -v
+          # Install dependencies
+          sudo apt-get update
+          sudo apt-get install -y libelf-dev
           cd kernel_workspace/kernel_platform/common
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
             RUSTC=../../prebuilts/rust/linux-x86/1.73.0/bin/rustc \
             PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
             LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error -flto=thin"
           if [[ "$KERNEL_VERSION" == "5.10" ]]; then
-            MAKE_ARGS="LLVM_IAS=1 " $MAKE_args
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
-          make -j$(nproc --all) O=out $MAKE_args gki_defconfig
-          make
-          make -j$(nproc) --all) O=out $MAKE_args || {
-            echo "Error: FAST build failed, check ThinLTO compatibility or clang version for $KERNEL_version $KERNEL_VERSION"
+          make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
+          make -j$(nproc --all) O=out $MAKE_ARGS || {
+            echo "Error: FAST build failed, check ThinLTO compatibility or clang version for kernel $KERNEL_VERSION"
             exit 1
-          fi
+          }
           # Verify ThinLTO in final .config
-          if ! ! grep -q -i "CONFIG_LTO_CLANG_THIN=y" out/.config; then
+          if ! grep -q "CONFIG_LTO_CLANG_THIN=y" out/.config; then
             echo "Error: ThinLTO not enabled in final kernel configuration"
             exit 1
           fi
@@ -484,6 +486,7 @@ jobs:
       - name: Fallback Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
         run: |
+          #!/usr/bin/bash -e
           cd kernel_workspace/kernel_platform
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
           CPU="${{ needs.get-config.outputs.CPU }}"
@@ -492,19 +495,40 @@ jobs:
           echo "Attempting kernel build for $KERNEL_VERSION on CPU $CPU with ThinLTO"
           if [[ "$CPU" == "sm8650" || "$CPU" == "sm7675" ]]; then
             echo "Running build_with_bazel.py with ThinLTO for CPU $CPU"
-            ./tools/bazel/bin/bazel build //build:kernel --action_env=LTO=thin \
+            # Check if bazel binary exists
+            BAZEL_PATH="./tools/bazel/bin/bazel"
+            if [ ! -x "$BAZEL_PATH" ]; then
+              echo "Error: Bazel binary not found at $BAZEL_PATH"
+              # Try system-wide bazel
+              if command -v bazel >/dev/null 2>&1; then
+                BAZEL_PATH="bazel"
+                echo "Falling back to system-wide bazel"
+              else
+                echo "Error: No bazel binary found. Installing bazel..."
+                sudo apt-get update && sudo apt-get install -y bazel
+                BAZEL_PATH="bazel"
+              fi
+            fi
+            # Run bazel build
+            $BAZEL_PATH build //build:kernel --action_env=LTO=thin \
               --lto=thin \
-              -t ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }}
+              -t ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }} || {
+              echo "Error: Bazel build failed. Falling back to make..."
+              FALLBACK_BUILD="true"
+            }
           else
             echo "Running oplus_build_kernel.sh with ThinLTO for CPU $CPU"
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 \
               KMI_SYMBOL_LIST_STRICT_MODE=0 \
               KCFLAGS="-flto=thin" \
-              ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }}
+              ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }} || {
+              echo "Error: oplus_build_kernel.sh failed. Falling back to make..."
+              FALLBACK_BUILD="true"
+            }
           fi
-          if [ $? -ne 0 ]; then
-            echo "Error: Fallback build failed. Retrying with explicit ThinLTO flags..."
-            # Retry with direct make to enforce ThinLTO
+          # Fallback to direct make if either build fails
+          if [ "$FALLBACK_BUILD" = "true" ] || [ $? -ne 0 ]; then
+            echo "Retrying with explicit ThinLTO flags using make..."
             cd common
             make -j$(nproc --all) O=out \
               LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
@@ -522,7 +546,7 @@ jobs:
             echo "Error: ThinLTO not enabled in final kernel configuration for fallback build"
             exit 1
           fi
-          echo "Fallback build completed successfully with ThinLTO"
+          echo "Fallback build completed successfully with ThinLTO" 
                   
       - name: Make AnyKernel3
         run: |
