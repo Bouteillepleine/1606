@@ -417,6 +417,7 @@ jobs:
       
       - name: Enable lto=thin For All Builds
         run: |
+          #!/usr/bin/bash -e
           cd kernel_workspace/kernel_platform
           DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
           if [ ! -f "$DEFCONFIG" ]; then
@@ -447,6 +448,7 @@ jobs:
         run: |
           #!/usr/bin/bash -e
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
+          # Set PATH for clang and ld.lld based on kernel version
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
             export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
           elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
@@ -458,19 +460,24 @@ jobs:
           else
             echo "⚠️ Kernel version \"$KERNEL_VERSION\" not explicitly supported for FAST build, attempting with ThinLTO"
           fi
-          # Verify clang version
+          # Verify clang and ld.lld
+          echo "Checking clang version..."
           ccache clang -v
+          echo "Checking ld.lld version..."
+          ld.lld --version || { echo "Error: ld.lld not found"; exit 1; }
           # Install dependencies
           sudo apt-get update
-          sudo apt-get install -y libelf-dev
+          sudo apt-get install -y libelf-dev binutils-dev
           cd kernel_workspace/kernel_platform/common
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
             RUSTC=../../prebuilts/rust/linux-x86/1.73.0/bin/rustc \
             PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-            LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error -flto=thin"
+            LD=ld.lld HOSTLD=ld.lld KCFLAGS=-Wno-error -flto=thin"
           if [[ "$KERNEL_VERSION" == "5.10" ]]; then
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
+          # Debug: Print MAKE_ARGS
+          echo "MAKE_ARGS=$MAKE_ARGS"
           make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
           make -j$(nproc --all) O=out $MAKE_ARGS || {
             echo "Error: FAST build failed, check ThinLTO compatibility or clang version for kernel $KERNEL_VERSION"
@@ -490,8 +497,26 @@ jobs:
           cd kernel_workspace/kernel_platform
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
           CPU="${{ needs.get-config.outputs.CPU }}"
-          # Ensure build scripts respect ThinLTO
-          export LTO_CONFIG="thin --config-args='--enable-lto=thin'"
+          # Set PATH for clang and ld.lld based on kernel version
+          if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
+          elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r487747c/bin:$PATH"
+          elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r450784e/bin:$PATH"
+          elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
+            export PATH="$GITHUB_WORKSPACE/kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin:$PATH"
+          else
+            echo "⚠️ Kernel version \"$KERNEL_VERSION\" not explicitly supported for fallback build, attempting with ThinLTO"
+          fi
+          # Verify clang and ld.lld
+          echo "Checking clang version..."
+          ccache clang -v
+          echo "Checking ld.lld version..."
+          ld.lld --version || { echo "Error: ld.lld not found"; exit 1; }
+          # Install dependencies
+          sudo apt-get update
+          sudo apt-get install -y libelf-dev binutils-dev
           echo "Attempting kernel build for $KERNEL_VERSION on CPU $CPU with ThinLTO"
           if [[ "$CPU" == "sm8650" || "$CPU" == "sm7675" ]]; then
             echo "Running build_with_bazel.py with ThinLTO for CPU $CPU"
@@ -499,28 +524,27 @@ jobs:
             BAZEL_PATH="./tools/bazel/bin/bazel"
             if [ ! -x "$BAZEL_PATH" ]; then
               echo "Error: Bazel binary not found at $BAZEL_PATH"
-              # Try system-wide bazel
               if command -v bazel >/dev/null 2>&1; then
                 BAZEL_PATH="bazel"
                 echo "Falling back to system-wide bazel"
               else
-                echo "Error: No bazel binary found. Installing bazel..."
+                echo "Installing bazel..."
                 sudo apt-get update && sudo apt-get install -y bazel
                 BAZEL_PATH="bazel"
               fi
             fi
-            # Run bazel build
-            $BAZEL_PATH build //build:kernel --action_env=LTO=thin \
-              --lto=thin \
-              -t ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }} || {
+            # Debug: List bazel directory
+            ls -l ./tools/bazel/bin/ || echo "Bazel directory not found"
+            # Run bazel build with ThinLTO
+            LTO=thin KCFLAGS="-flto=thin" $BAZEL_PATH build //common:kernel_aarch64 \
+              --action_env=LTO=thin --action_env=KCFLAGS="-flto=thin" || {
               echo "Error: Bazel build failed. Falling back to make..."
               FALLBACK_BUILD="true"
             }
           else
             echo "Running oplus_build_kernel.sh with ThinLTO for CPU $CPU"
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 \
-              KMI_SYMBOL_LIST_STRICT_MODE=0 \
-              KCFLAGS="-flto=thin" \
+              KMI_SYMBOL_LIST_STRICT_MODE=0 KCFLAGS="-flto=thin" \
               ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }} || {
               echo "Error: oplus_build_kernel.sh failed. Falling back to make..."
               FALLBACK_BUILD="true"
@@ -532,11 +556,11 @@ jobs:
             cd common
             make -j$(nproc --all) O=out \
               LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-              CC=clang KCFLAGS="-flto=thin" \
+              CC=clang LD=ld.lld HOSTLD=ld.lld KCFLAGS="-flto=thin" \
               gki_defconfig
             make -j$(nproc --all) O=out \
               LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-              CC=clang KCFLAGS="-flto=thin" || {
+              CC=clang LD=ld.lld HOSTLD=ld.lld KCFLAGS="-flto=thin" || {
               echo "Error: Fallback retry build failed, check ThinLTO compatibility or build script issues"
               exit 1
             }
