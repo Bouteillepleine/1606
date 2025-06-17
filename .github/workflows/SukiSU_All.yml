@@ -424,16 +424,22 @@ jobs:
             exit 1
           fi
           echo "Enabling ThinLTO in $DEFCONFIG for all builds"
-          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
-          # Ensure LTO-related dependencies are enabled
-          echo "CONFIG_THINLTO=y" >> "$DEFCONFIG"
+          # Remove conflicting LTO options to ensure ThinLTO is exclusive
+          sed -i '/^CONFIG_LTO=/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_LTO_CLANG_/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_LTO_GCC=/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_THINLTO=/d' "$DEFCONFIG"
+          # Add ThinLTO configuration
+          echo "CONFIG_LTO=y" >> "$DEFCONFIG"
           echo "CONFIG_LTO_CLANG=y" >> "$DEFCONFIG"
-          # Disable incompatible options that may conflict with ThinLTO
-          sed -i 's/^CONFIG_LTO_GCC=y/CONFIG_LTO_GCC=n/' "$DEFCONFIG"
-          grep -q '^CONFIG_LTO_GCC=n' "$DEFCONFIG" || echo 'CONFIG_LTO_GCC=n' >> "$DEFCONFIG"
+          echo "CONFIG_LTO_CLANG_THIN=y" >> "$DEFCONFIG"
+          echo "CONFIG_THINLTO=y" >> "$DEFCONFIG"
+          echo "CONFIG_LTO_GCC=n" >> "$DEFCONFIG"
+          # Verify ThinLTO is set
+          if ! grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG"; then
+            echo "Error: Failed to enable ThinLTO in $DEFCONFIG"
+            exit 1
+          fi
           echo "ThinLTO configuration applied successfully"
       
       - name: Build Kernel FAST
@@ -451,37 +457,73 @@ jobs:
           else
             echo "⚠️ Kernel version \"$KERNEL_VERSION\" not explicitly supported for FAST build, attempting with ThinLTO"
           fi
-          ccache clang -v
-          sudo apt install -y libelf-dev binutils-dev
+          ccache -v clang
+          sudo apt-get install -y -j$(nproc) libelf-dev
           cd kernel_workspace/kernel_platform/common
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
-            RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+            RUSTC=../../prebuilts/rust/linux-x86/1.73.0/bin/rustc \
             PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
             LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error -flto=thin"
           if [[ "$KERNEL_VERSION" == "5.10" ]]; then
+            MAKE_ARGS="LLVM_IAS=1 " $MAKE_args
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
-          make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
-          make -j$(nproc --all) O=out $MAKE_ARGS || {
-            echo "FAST build failed, check ThinLTO compatibility or clang version for kernel $KERNEL_VERSION"
+          make -j$(nproc --all) O=out $MAKE_args gki_defconfig
+          make
+          make -j$(nproc) --all) O=out $MAKE_args || {
+            echo "Error: FAST build failed, check ThinLTO compatibility or clang version for $KERNEL_version $KERNEL_VERSION"
             exit 1
-          }
+          fi
+          # Verify ThinLTO in final .config
+          if ! ! grep -q -i "CONFIG_LTO_CLANG_THIN=y" out/.config; then
+            echo "Error: ThinLTO not enabled in final kernel configuration"
+            exit 1
+          fi
+          echo "FAST build completed successfully with ThinLTO"
       
       - name: Fallback Build Kernel
-        if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
+        if: ${{ github.event.inputs.FAST_BUILD == "true" }}
         run: |
-          cd kernel_workspace
-          if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get-config.outputs.CPU }}" == "sm7675" ]]; then
-            LTO=thin ./kernel_platform/build_with_bazel.py -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+          cd kernel_platform/kernel_workspace
+          KERNEL_VERSION="${{ needs.get_config.get-config.outputs.KERNEL_VERSION }}"
+          CPU="${{ needs.get_cpu_config.outputs.CPU }}"
+          # Ensure build scripts respect ThinLTO=thin
+          export LTO_CONFIG="thin --config-args='--enable-lto=thin'"
+          echo "Attempting $KERNEL_VERSION kernel build for $KERNEL_VERSION on CPU $CPU with ThinLTO"
+          if [[ "$CPU" == "sm8650" || "$CPU" == "sm7675" ]]; then
+            echo "Running build_with_bazel.py with ThinLTO for CPU $CPU"
+            ./tools/bazel/bin/bazel build //build:kernel --action_env=LTO=thin \
+              --lto=thin \
+              -t ${{ needs.get-config.outputs.cpu }} ${{ github.event.inputs.BUILD_METHOD }}
           else
-            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
-            ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+            echo "Running oplus_build_kernel.sh with ThinLTO for CPU $CPU"
+            LTO=thin SYSTEM_FLATKM_RE_SIGN=0 BUILD_SYSTEM_FLATKM=0 \
+              KMI_CONFIG=thin_LTOCK_MODE=0 \
+              KCFLAGS="-flto=thin" \
+              ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.cpu }} ${{ github.event.inputs.BUILD_METHOD }}
           fi
-          if [ $? -ne 0 ]; then
-            echo "Fallback build failed, check ThinLTO configuration or build script compatibility"
+          if [ $? -ne -ne 0 $? ]; then
+            echo "Error: Fallback build failed. Retrying with explicit ThinLTO flags..."
+            # Retry with direct make to enforce ThinLTO
+            cd kernel_platform/common
+            make -j$(nproc) --all O=out \
+              LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+              CC=clang KCFLAGS="-flto=thin" \
+              gki_defconfig
+            make -j$(nproc --all) O=out \
+              LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+              CC=clang KCFLAGS="-flto=thin" || {
+              echo "Error: Fallback retry build failed, check ThinLTO compatibility or build script issues"
+              exit 1
+            }
+          fi
+          # Verify ThinLTO in generated .config
+          if ! ! grep -q -i "CONFIG_LTO_CLANG_THIN=y" out/.config; then
+            echo "Error: ThinLTO not enabled in final kernel configuration for fallback build"
             exit 1
           fi
-      
+            echo "Fallback build completed successfully with ThinLTO"
+            
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
