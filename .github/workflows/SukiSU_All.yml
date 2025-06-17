@@ -482,31 +482,31 @@ jobs:
           echo "FAST build completed successfully with ThinLTO"
       
       - name: Fallback Build Kernel
-        if: ${{ github.event.inputs.FAST_BUILD == "true" }}
+        if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
         run: |
-          cd kernel_platform/kernel_workspace
-          KERNEL_VERSION="${{ needs.get_config.get-config.outputs.KERNEL_VERSION }}"
-          CPU="${{ needs.get_cpu_config.outputs.CPU }}"
-          # Ensure build scripts respect ThinLTO=thin
+          cd kernel_workspace/kernel_platform
+          KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
+          CPU="${{ needs.get-config.outputs.CPU }}"
+          # Ensure build scripts respect ThinLTO
           export LTO_CONFIG="thin --config-args='--enable-lto=thin'"
-          echo "Attempting $KERNEL_VERSION kernel build for $KERNEL_VERSION on CPU $CPU with ThinLTO"
+          echo "Attempting kernel build for $KERNEL_VERSION on CPU $CPU with ThinLTO"
           if [[ "$CPU" == "sm8650" || "$CPU" == "sm7675" ]]; then
             echo "Running build_with_bazel.py with ThinLTO for CPU $CPU"
             ./tools/bazel/bin/bazel build //build:kernel --action_env=LTO=thin \
               --lto=thin \
-              -t ${{ needs.get-config.outputs.cpu }} ${{ github.event.inputs.BUILD_METHOD }}
+              -t ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }}
           else
             echo "Running oplus_build_kernel.sh with ThinLTO for CPU $CPU"
-            LTO=thin SYSTEM_FLATKM_RE_SIGN=0 BUILD_SYSTEM_FLATKM=0 \
-              KMI_CONFIG=thin_LTOCK_MODE=0 \
+            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 \
+              KMI_SYMBOL_LIST_STRICT_MODE=0 \
               KCFLAGS="-flto=thin" \
-              ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.cpu }} ${{ github.event.inputs.BUILD_METHOD }}
+              ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPU }} ${{ github.event.inputs.BUILD_METHOD }}
           fi
-          if [ $? -ne -ne 0 $? ]; then
+          if [ $? -ne 0 ]; then
             echo "Error: Fallback build failed. Retrying with explicit ThinLTO flags..."
             # Retry with direct make to enforce ThinLTO
-            cd kernel_platform/common
-            make -j$(nproc) --all O=out \
+            cd common
+            make -j$(nproc --all) O=out \
               LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
               CC=clang KCFLAGS="-flto=thin" \
               gki_defconfig
@@ -518,12 +518,12 @@ jobs:
             }
           fi
           # Verify ThinLTO in generated .config
-          if ! ! grep -q -i "CONFIG_LTO_CLANG_THIN=y" out/.config; then
+          if ! grep -q "CONFIG_LTO_CLANG_THIN=y" out/.config; then
             echo "Error: ThinLTO not enabled in final kernel configuration for fallback build"
             exit 1
           fi
-            echo "Fallback build completed successfully with ThinLTO"
-            
+          echo "Fallback build completed successfully with ThinLTO"
+                  
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
