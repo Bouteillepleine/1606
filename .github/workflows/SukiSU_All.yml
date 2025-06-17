@@ -414,7 +414,7 @@ jobs:
           cp -r ./sched_ext/* ./common/kernel/sched
           rm -rf ./sched_ext/.git
           cd common/kernel/sched         
-            
+      
       - name: Enable lto=thin For All Builds
         run: |
           cd kernel_workspace/kernel_platform
@@ -546,7 +546,7 @@ jobs:
             echo "Error: ThinLTO not enabled in final kernel configuration for fallback build"
             exit 1
           fi
-          echo "Fallback build completed successfully with ThinLTO" 
+          echo "Fallback build completed successfully with ThinLTO"  
                   
       - name: Make AnyKernel3
         run: |
