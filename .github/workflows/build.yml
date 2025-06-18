@@ -89,22 +89,33 @@ jobs:
 
       - name: Clone AnyKernel3 and Other Dependencies
         run: |
+          set -x
           echo "Cloning AnyKernel3 and other dependencies..."
           
           ANYKERNEL_BRANCH="gki-2.0"
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-          
+
           # Debug print the branches
           echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
           echo "Using branch for SUSFS: $SUSFS_BRANCH"
-          
+
           # Clone repositories using the branch names
           git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-          git clone https://github.com/TheWildJames/kernel_patches.git
+          #git clone https://github.com/TheWildJames/kernel_patches.git
+          git clone https://github.com/luigimak/kernel_patches.git
+
+      - name: Get SUSFS Version
+        run: |
+          set -x
+          RAW_VERSION=$(grep -oP 'SUSFS_VERSION\s+"[^"]+"' susfs4ksu/kernel_patches/include/linux/susfs.h | grep -oP '"\K[^"]+')
+          SUSFS_VERSION=${RAW_VERSION#v}
+          echo "SUSFSVER=$SUSFS_VERSION" >> $GITHUB_ENV
+          echo "🔹Detected SUSFS version: $SUSFS_VERSION"
 
       - name: Initialize and Sync Kernel Source
         run: |
+          set -x
           echo "Creating folder for configuration: $CONFIG..."
           mkdir -p "$CONFIG"
           cd "$CONFIG"
@@ -117,23 +128,30 @@ jobs:
           $REPO --version
           $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
       
-      - name: Add KernelSU Next
+      - name: Add KernelSU-Next
         run: |
+          set -x
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform"
           
-          echo "Adding KernelSU Next..."
-          
-          if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
-          else
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
-          fi
+          echo "Adding KernelSU-Next..."
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          #curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
+          #curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next-susfs-dev/kernel/setup.sh" | bash -s next-susfs-dev
           
           git submodule update --init --recursive
+          cd KernelSU-Next/kernel
+          # next
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10200)
+          # next-susfs & next-susfs-dev
+          #KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10198)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "🔹Detected KernelSU-Next version: $KSU_VERSION"
+          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
 
       - name: Apply SUSFS Patches
         run: |
+          set -x
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform"
           
@@ -146,72 +164,92 @@ jobs:
           
           cd ./KernelSU-Next
           
-          if [ "${{ inputs.ksun_branch }}" == "stable" ] || [ "${{ inputs.ksun_branch }}" == "next" ]; then
-            echo "Applying next SUSFS patches..."
-            cp ../../../kernel_patches/next/ksun_susfs_v1.5.7_patch_12647+.patch ./ksun_susfs_latest.patch
-            patch -p1 --forward < ksun_susfs_latest.patch || true
+          if [ "$SUSFSVER" = "1.5.8" ]; then
+            echo "Applying 0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch"
+            cp ../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch ./
+            patch -p1 --forward --verbose < 0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch || true
+          else
+            echo "Applying ksun_susfs_v1.5.7_patch_12647+.patch"
+            cp ../../../kernel_patches/next/ksun_susfs_v1.5.7_patch_12647+.patch ./
+            patch -p1 --forward --verbose < ksun_susfs_v1.5.7_patch_12647+.patch || true
           fi
+          ls -l *.rej || true
+          cat *.rej || true
           
-          # Determine base version based on branch
-          case "${{ inputs.ksun_branch }}" in
-            next|stable)
-              BASE_VERSION=10200
-              ;;
-            next-susfs|next-susfs-dev)
-              BASE_VERSION=10198
-              ;;
-            *)
-              BASE_VERSION=10200
-              ;;
-          esac
-          
-          cd ./kernel
-          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
+          #echo "Applying kernel-patch-susfs-v1.5.7-to-KernelSU-Next.patch..."
+          #cp ../../../kernel_patches/next/ksun_susfs_v1.5.7_patch_12647+.patch ./
+          #patch -p1 --forward --verbose < ksun_susfs_v1.5.7_patch_12647+.patch || true
+          #ls -l *.rej || true
+          #cat *.rej || true
           
           # Change to common directory and apply SUSFS patch
-          cd ../../common
-          if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
+          cd ../common
+          if [ "${{ inputs.soc }}" = "sun" ]; then
               if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
                   sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
               else
                   echo "Line already present. Skipping insert."
               fi
           fi
-          patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-          
+          echo "Applying 50_add_susfs_in_gki-.patch..."
+          patch -p1 --verbose < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+          ls -l *.rej || true
+          cat *.rej || true
+
           if ! grep -qxF '#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55561' ./include/linux/susfs_def.h; then
-              curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/hide_sus_mnts_for_all_procs.patch  | patch -p1 -F 3
+              curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/hide_sus_mnts_for_all_procs.patch  | patch -p1 -F 3 --verbose
+              ls -l *.rej || true
+              cat *.rej || true
           else
               echo "Line already present. Skipping SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS Patch."
           fi
-          
+
           KERNEL_VERSION="${{ inputs.kernel_version }}"
           MIN_VERSION="5.16"
           
           if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-            echo "Patching ptrace!"
-            curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/ptrace.patch  | patch -p1 -F 3
+            echo "Applying ptrace.patch!"
+            curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/ptrace.patch  | patch -p1 -F 3 --verbose
+            ls -l *.rej || true
+            cat *.rej || true
           else
             echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
           fi
 
-      - name: Apply KSUN Hooks
+      - name: Apply KernelSU-Next Hooks
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform/common"
-          echo "Applying KSUN Hooks..."
-          cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
-          patch -p1 --fuzz=3 < ./manual_hooks.patch
-          
-      - name: Apply Hide Stuff Patches
-        run: |
+          set -x
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform/common"
           # Apply additional patch
+          #echo "Applying syscall_hooks.patch..."
+          #cp ../../../kernel_patches/next/syscall_hooks.patch ./
+          #patch -p1 --fuzz=3 --verbose < ./syscall_hooks.patch || true
+          echo "Applying scope_min_manual_hooks.patch..."
+          cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./
+          patch -p1 --fuzz=3 --verbose < ./scope_min_manual_hooks_v1.4.patch || true
+          ls -l *.rej || true
+          cat *.rej || true
+          
+      - name: Apply Hide Stuff Patches
+        run: |
+          set -x
+          echo "Changing to configuration directory: $CONFIG..."
+          cd "$CONFIG/kernel_platform/common"
+          echo "Applying 69_hide_stuff.patch..."
           cp ../../../kernel_patches/69_hide_stuff.patch ./
-          patch -p1 -F 3 < 69_hide_stuff.patch
+          patch -p1 --fuzz=3 --verbose < 69_hide_stuff.patch || true
+          ls -l *.rej || true
+          cat *.rej || true
+          
+      - name: Add Manager Patch
+        run: |
+          cd "$CONFIG/kernel_platform/KernelSU-Next"
+          echo "Applying manager.patch for KernelSU Next..."
+          cp ../../../kernel_patches/next/manager.patch ./
+          patch -p1 --fuzz=3 --verbose < manager.patch || true
+          ls -l *.rej || true
+          cat *.rej || true
 
       - name: Add KernelSU-Next and SUSFS Configuration Settings
         run: |
@@ -271,7 +309,8 @@ jobs:
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
 	  echo "CONFIG_IP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
+
+      	  echo "CONFIG_TCP_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IPV6_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP_NF_TARGET_ECN=y" >> ./common/arch/arm64/configs/gki_defconfig
 
@@ -386,9 +425,9 @@ jobs:
           # Run sed commands for modifications
           sed -i 's/check_defconfig//' ./common/build.config.gki
           # For Old setlocalversion Script
-          tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
-          tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
-          tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)-OP-Wild\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
+          tac ./common/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)\;echo "\$res"\;/' | tac > ./common/scripts/setlocalversion.tmp && mv ./common/scripts/setlocalversion.tmp ./common/scripts/setlocalversion
+          tac ./msm-kernel/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)\;echo "\$res"\;/' | tac > ./msm-kernel/scripts/setlocalversion.tmp && mv ./msm-kernel/scripts/setlocalversion.tmp ./msm-kernel/scripts/setlocalversion
+          tac ./external/dtc/scripts/setlocalversion | sed '0,/echo "\$res"/s//res=\$\(echo \$res \| cut -d- -f1-2\)\;echo "\$res"\;/' | tac > ./external/dtc/scripts/setlocalversion.tmp && mv ./external/dtc/scripts/setlocalversion.tmp ./external/dtc/scripts/setlocalversion
           # For New setlocalversion Script
           sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./common/scripts/setlocalversion
           sed -i 's/echo "${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}"/echo "${KERNELVERSION}-${{ inputs.android_version }}-OP-Wild"/' ./msm-kernel/scripts/setlocalversion
@@ -455,23 +494,46 @@ jobs:
         run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
-          
+
           echo "Copying Image"
           cp ./out/dist/Image ../AnyKernel3/Image
+          if [ "${{ inputs.model }}" == "OPAce5Pro" ]; then
+            cp ./out/dist/dtbo.img ../AnyKernel3/
+            cp ./out/dist/system_dlkm.erofs.img ../AnyKernel3/system_dlkm.img
+            # cp ./out/dist/vendor_dlkm.img ../AnyKernel3/
+            # cp ./out/dist/vendor_boot.img ../AnyKernel3/
+          fi
+
+          if [ "${{ inputs.model }}" == "OP13" ]; then
+            cp ./out/dist/dtbo.img ../AnyKernel3/
+          fi
 
       - name: Create ZIP Files for Different Formats
         run: |
           echo "Navigating to AnyKernel3 directory..."
           cd ./AnyKernel3
-          
+
           # Zip the files in the AnyKernel3 directory with a new naming convention
           ZIP_NAME="${{ inputs.model }}_${{ inputs.android_version }}_${{ inputs.kernel_version }}_Next_SUSFS_AnyKernel3.zip"
           echo "Creating zip file $ZIP_NAME..."
           zip -r "../$ZIP_NAME" ./*
 
+          # Fengchi Patch for OPAce5Pro
+          if [ "${{ inputs.model }}" == "OPAce5Pro" ]; then
+            sed -i 's/hmbird/xxbird/g' dtbo.img
+            zip -r "../$ZIP_NAME-CN-version.zip" ./*
+          fi
+
+          # Fengchi Patch for OP13
+          if [ "${{ inputs.model }}" == "OP13" ]; then
+            sed -i 's/hmbird/xxbird/g' dtbo.img
+            zip -r "../$ZIP_NAME-CN-version.zip" ./*
+          fi
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kernel-${{ env.CONFIG }}
+          compression-level: 0
           path: |
             *.zip
