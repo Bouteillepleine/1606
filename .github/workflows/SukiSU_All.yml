@@ -384,13 +384,11 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
           fi
 
-          # BBR configuration
+          # BBR configuration (remove conflicting settings)
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
-          echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_HTCP=n" >> "$CONFIG_FILE"
 
           # LZ4KD configuration
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
@@ -414,7 +412,6 @@ jobs:
           echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_FASTOPEN=y" >> "$CONFIG_FILE"
-          echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$CONFIG_FILE"
@@ -456,6 +453,29 @@ jobs:
             {} \; || true
           echo "Blacklisted modules disabled successfully"
 
+      - name: Enable ThinLTO
+        run: |
+          cd kernel_workspace/kernel_platform
+          DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
+          echo "Enabling ThinLTO in $DEFCONFIG"
+          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
+          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
+
+      - name: Patch Bazel Configuration for make_goals
+        run: |
+          cd kernel_workspace/kernel_platform
+          if [ -f msm-kernel/BUILD.bazel ]; then
+            echo "Patching msm-kernel/BUILD.bazel to use make_goals"
+            sed -i '/MAKE_GOALS/d' msm-kernel/BUILD.bazel
+            echo 'make_goals = ["modules", "dtbs"]' >> msm-kernel/BUILD.bazel
+            git add msm-kernel/BUILD.bazel
+            git commit -m "Update msm-kernel/BUILD.bazel to use make_goals"
+          else
+            echo "msm-kernel/BUILD.bazel not found, skipping make_goals patch"
+          fi
+
       - name: Add sched_ext
         if: ${{ github.event.inputs.SCHED == 'true' }}
         run: |
@@ -465,28 +485,10 @@ jobs:
           rm -rf ./sched_ext/.git
           cd common/kernel/sched
 
-      - name: Enable lto=thin For FAST
-        if: ${{ (needs.get-config.outputs.KERNEL_VERSION == '5.10' || needs.get-config.outputs.KERNEL_VERSION == '5.15') && github.event.inputs.FAST_BUILD == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform
-
-          DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-
-          echo "Enabling ThinLTO in $DEFCONFIG"
-
-          # Enable CONFIG_LTO
-          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-
-          # Replace FULL/NONE with THIN to avoid conflicts
-          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-
-          # Add THIN if not set
-          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
-
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
+          export PATH="/usr/local/bin:$PATH"
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
 
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
@@ -501,6 +503,7 @@ jobs:
             echo "⚠️ Current kernel version \"$KERNEL_VERSION\" has no corresponding clang toolchain, falling back to official build script (custom kernel suffix may cause issues)"
             echo "Consider disabling FAST_BUILD or adding the clang path for this version"
             cd kernel_workspace
+            export PATH="/usr/local/bin:$PATH"
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
             exit 0
@@ -524,6 +527,7 @@ jobs:
         if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
         run: |
           cd kernel_workspace
+          export PATH="/usr/local/bin:$PATH"
           if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get-config.outputs.CPU }}" == "sm7675" ]]; then
             LTO=thin ./kernel_platform/build_with_bazel.py -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           else
