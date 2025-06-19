@@ -430,7 +430,6 @@ jobs:
         run: |
           export PATH="/usr/bin:$PATH"
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
-
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
             export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
           elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
@@ -451,7 +450,6 @@ jobs:
           ccache clang -v
           sudo apt install -y libelf-dev
           cd kernel_workspace/kernel_platform/common
-
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
             RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
             PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
