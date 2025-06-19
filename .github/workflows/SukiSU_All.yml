@@ -241,7 +241,7 @@ jobs:
           cpu="${{ needs.get-config.outputs.CPU }}"
           mkdir -p .repo/manifests
           echo "Downloading manifest $feil.xml from branch oneplus/$cpu..."
-          curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/$ personally.xml"
+          curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/${feil}.xml"
           mv "$feil.xml" ".repo/manifests/${feil}.xml"
 
       # Add SukiSU Ultra
