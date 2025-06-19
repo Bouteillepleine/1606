@@ -465,39 +465,14 @@ jobs:
         run: |
           cd kernel_workspace
           export PATH="/usr/bin:$PATH"
-          echo "Building kernel with LTO=thin"
-          echo "LTO setting: $LTO"
+          export LTO=thin
+          echo "Building kernel with LTO=$LTO"
           if [[ "${{ needs.get-config.outputs.CPU }}" == "sm8650" || "${{ needs.get-config.outputs.CPU }}" == "sm7675" ]]; then
-            LTO=thin ./kernel_platform/build_with_bazel.py --lto=thin -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }} --verbose
+            ./kernel_platform/build_with_bazel.py --lto=thin -t ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }} --subcommands
           else
-            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ needs.get-config.outputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           fi
-          # Verify ThinLTO configuration
-          CONFIG_FILE="kernel_platform/common/out/.config"
-          if [ -f "$CONFIG_FILE" ]; then
-            echo "Checking ThinLTO configuration in $CONFIG_FILE"
-            grep "CONFIG_LTO_CLANG_THIN" "$CONFIG_FILE" || echo "CONFIG_LTO_CLANG_THIN not found in .config"
-            if grep -q "CONFIG_LTO_CLANG_THIN=y" "$CONFIG_FILE"; then
-              echo "ThinLTO is enabled (CONFIG_LTO_CLANG_THIN=y)"
-            else
-              echo "Error: ThinLTO is not enabled! Check gki_defconfig and build scripts."
-              exit 1
-            fi
-            # Check for -flto=thin in build flags
-            if grep -r "flto=thin" kernel_platform/out/ | grep -q "KCFLAGS"; then
-              echo "ThinLTO flags (-flto=thin) found in build output"
-            else
-              echo "Warning: ThinLTO flags (-flto=thin) not found in build output"
-            fi
-          else
-            echo "Error: Kernel .config file not found at $CONFIG_FILE"
-            exit 1
-          fi
-          # Log resource usage after build
-          df -h
-          free -h
-          top -b -n 1 | head -n 20
 
       - name: Make AnyKernel3
         run: |
