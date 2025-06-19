@@ -6,7 +6,7 @@ on:
         type: choice
         description: "Configuration File"
         required: true
-        default: oneplus_ace2pro_v
+        default: oneplus_13r
         options:
           - oneplus_nord_ce4_v
           - oneplus_ace_3v_v
@@ -40,16 +40,7 @@ on:
         default: gki
         options:
           - gki
-          - perf
-      SUSFS_CI:
-        type: choice
-        description: "SUSFS Module Download Method"
-        required: true
-        default: CI
-        options:
-          - CI
-          - Release
-          - NoN
+          - perf      
       SUFFIX:
         type: string
         description: "Custom Kernel Suffix (Leave blank to use a random string)"
