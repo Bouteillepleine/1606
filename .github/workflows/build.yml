@@ -3,38 +3,40 @@ permissions:
   contents: write  # Allow writing to repository contents (for pushing tags)
   actions: write   # Allows triggering actions
 
-on:
-  workflow_call: # This allows this workflow to be called from another workflow
-    inputs:
-      model:
-        required: true
-        type: string
-      soc:
-        required: true
-        type: string
-      branch:
-        required: true
-        type: string
-      manifest:
-        required: true
-        type: string
-      android_version:
-        required: true
-        type: string
-      kernel_version:
-        required: true
-        type: string
-      ksun_branch:
-        required: true
-        type: string
-        default: stable
 
-jobs:
-  build-kernel-oneplus-kernelsu-susfs:
-    runs-on: ubuntu-latest
+inputs:
+  model:
+    required: true
+    type: string
+  soc:
+    required: true
+    type: string
+  branch:
+    required: true
+    type: string
+  manifest:
+    required: true
+    type: string
+  android_version:
+    required: true
+    type: string
+  kernel_version:
+    required: true
+    type: string
+  ksun_branch:
+    required: true
+    type: string
+    default: stable
+  susfs_branch:
+    required: true
+    type: string
+    default: ""
 
+runs:
+    using: "composite"
     steps:
-      - name: Setup System
+      - name: Setup Build System
+        shell: bash
         run: |
           export DEBIAN_FRONTEND=noninteractive
           echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
@@ -66,10 +68,9 @@ jobs:
           echo "some packages purged"
           
           df -h
-
-      - name: Install Repo and Python
-        run: |
+          
           # Install dependencies
+          echo "Installing Repo and Python"
           sudo apt update
           sudo apt install -y python3 python-is-python3
           
@@ -77,45 +78,46 @@ jobs:
           curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
           chmod a+rx ./git-repo/repo
           echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
-
-      - name: Set CONFIG Environment Variable
-        run: |
-          CONFIG="${{ inputs.model }}"
           
-          # Set CONFIG as an environment variable for future steps
-          echo "CONFIG=$CONFIG" >> $GITHUB_ENV
-          
-          echo "CONFIG set to: $CONFIG"
+          # Set CONFIG Environment Variable
+          echo "CONFIG=${{ inputs.model }}" >> $GITHUB_ENV
 
       - name: Clone AnyKernel3 and Other Dependencies
+        shell: bash
         run: |
-          set -x
           echo "Cloning AnyKernel3 and other dependencies..."
           
           ANYKERNEL_BRANCH="gki-2.0"
-          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-
+          if [[ -z "${{ inputs.susfs_branch }}" ]]; then
+            SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+          else
+            SUSFS_BRANCH="${{ inputs.susfs_branch }}"
+          fi
+          
           # Debug print the branches
           echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
           echo "Using branch for SUSFS: $SUSFS_BRANCH"
-
+          
           # Clone repositories using the branch names
           git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-          #git clone https://github.com/TheWildJames/kernel_patches.git
-          git clone https://github.com/luigimak/kernel_patches.git
-
-      - name: Get SUSFS Version
-        run: |
-          set -x
-          RAW_VERSION=$(grep -oP 'SUSFS_VERSION\s+"[^"]+"' susfs4ksu/kernel_patches/include/linux/susfs.h | grep -oP '"\K[^"]+')
-          SUSFS_VERSION=${RAW_VERSION#v}
-          echo "SUSFSVER=$SUSFS_VERSION" >> $GITHUB_ENV
-          echo "🔹Detected SUSFS version: $SUSFS_VERSION"
+          git clone https://github.com/TheWildJames/kernel_patches.git
+          
+          # Clone the repo with all branches and history (can optimize later if needed)
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git
+          cd susfs4ksu || exit 1
+          
+          # Try to check if TARGET_REF is a valid branch or tag
+          if git rev-parse --verify "origin/$SUSFS_BRANCH" >/dev/null 2>&1 || git rev-parse --verify "$SUSFS_BRANCH" >/dev/null 2>&1 ; then
+            # It's a branch or commit hash
+            git checkout "$SUSFS_BRANCH"
+          else
+            echo "Error: '$TARGET_REF' is neither a valid branch/tag nor a valid commit hash."
+            exit 1
+          fi
 
       - name: Initialize and Sync Kernel Source
+        shell: bash
         run: |
-          set -x
           echo "Creating folder for configuration: $CONFIG..."
           mkdir -p "$CONFIG"
           cd "$CONFIG"
@@ -128,30 +130,23 @@ jobs:
           $REPO --version
           $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
       
-      - name: Add KernelSU-Next
+      - name: Add KernelSU Next
+        shell: bash
         run: |
-          set -x
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform"
           
-          echo "Adding KernelSU-Next..."
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-          #curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
-          #curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next-susfs-dev/kernel/setup.sh" | bash -s next-susfs-dev
+          echo "Adding KernelSU Next..."
           
-          git submodule update --init --recursive
-          cd KernelSU-Next/kernel
-          # next
-          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10200)
-          # next-susfs & next-susfs-dev
-          #KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10198)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          echo "🔹Detected KernelSU-Next version: $KSU_VERSION"
-          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
+          if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          else
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
+          fi
 
       - name: Apply SUSFS Patches
+        shell: bash
         run: |
-          set -x
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform"
           
@@ -164,83 +159,65 @@ jobs:
           
           cd ./KernelSU-Next
           
-          if [ "$SUSFSVER" = "1.5.8" ]; then
-            echo "Applying 0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch"
-            cp ../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch ./
-            patch -p1 --forward --verbose < 0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch || true
-          else
-            echo "Applying ksun_susfs_v1.5.7_patch_12647+.patch"
-            cp ../../../kernel_patches/next/ksun_susfs_v1.5.7_patch_12647+.patch ./
-            patch -p1 --forward --verbose < ksun_susfs_v1.5.7_patch_12647+.patch || true
-          fi
-          ls -l *.rej || true
-          cat *.rej || true
+          echo "Applying next SUSFS patches..."
+          susfs_version=$(grep '#define SUSFS_VERSION' ../common/include/linux/susfs.h | awk -F'"' '{print $2}')
+          echo "SUSVER=$susfs_version" >> $GITHUB_ENV
+          BASE_VERSION=10200
+          KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/commits?sha=${{ inputs.ksun_branch }}&per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') "+" $BASE_VERSION)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KernelSU Next Version: $KSU_VERSION"
+          echo "SusFS Version: $susfs_version"
           
-          #echo "Applying kernel-patch-susfs-v1.5.7-to-KernelSU-Next.patch..."
-          #cp ../../../kernel_patches/next/ksun_susfs_v1.5.7_patch_12647+.patch ./
-          #patch -p1 --forward --verbose < ksun_susfs_v1.5.7_patch_12647+.patch || true
-          #ls -l *.rej || true
-          #cat *.rej || true
+          case "$susfs_version" in
+            "v1.5.5"|"v1.5.6"|"v1.5.7")
+              cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.5-v1.5.7-KSUN-v1.0.8.patch" "./ksun_susfs_latest.patch"
+              ;;
+            "v1.5.8")
+              cp "../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch" "./ksun_susfs_latest.patch"
+              ;;
+            *)
+              echo "Invalid version: $susfs_version"
+              exit 1
+              ;;
+          esac
+          patch -p1 --forward < ksun_susfs_latest.patch || true
+          
           
           # Change to common directory and apply SUSFS patch
           cd ../common
-          if [ "${{ inputs.soc }}" = "sun" ]; then
+          if [ "${{ inputs.android_version }}" = "android15" ] && [ "${{ inputs.kernel_version }}" = "6.6" ]; then
               if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
                   sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
               else
                   echo "Line already present. Skipping insert."
               fi
           fi
-          echo "Applying 50_add_susfs_in_gki-.patch..."
-          patch -p1 --verbose < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-          ls -l *.rej || true
-          cat *.rej || true
-
+          patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+          
           if ! grep -qxF '#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55561' ./include/linux/susfs_def.h; then
-              curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/hide_sus_mnts_for_all_procs.patch  | patch -p1 -F 3 --verbose
-              ls -l *.rej || true
-              cat *.rej || true
+              curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/hide_sus_mnts_for_all_procs.patch  | patch -p1 -F 3
           else
               echo "Line already present. Skipping SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS Patch."
           fi
-
+          
           KERNEL_VERSION="${{ inputs.kernel_version }}"
           MIN_VERSION="5.16"
           
           if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-            echo "Applying ptrace.patch!"
-            curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/ptrace.patch  | patch -p1 -F 3 --verbose
-            ls -l *.rej || true
-            cat *.rej || true
+            echo "Patching ptrace!"
+            curl -Ls https://raw.githubusercontent.com/fatalcoder524/kernel_patches_additional/refs/heads/main/ptrace.patch  | patch -p1 -F 3
           else
             echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
           fi
 
-      - name: Apply KernelSU-Next Hooks
+      - name: Apply KSUN Hooks
+        shell: bash
         run: |
-          set -x
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG/kernel_platform/common"
-          # Apply additional patch
-          #echo "Applying syscall_hooks.patch..."
-          #cp ../../../kernel_patches/next/syscall_hooks.patch ./
-          #patch -p1 --fuzz=3 --verbose < ./syscall_hooks.patch || true
-          echo "Applying scope_min_manual_hooks.patch..."
-          cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./
-          patch -p1 --fuzz=3 --verbose < ./scope_min_manual_hooks_v1.4.patch || true
-          ls -l *.rej || true
-          cat *.rej || true
-          
-      - name: Apply Hide Stuff Patches
-        run: |
-          set -x
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform/common"
-          echo "Applying 69_hide_stuff.patch..."
-          cp ../../../kernel_patches/69_hide_stuff.patch ./
-          patch -p1 --fuzz=3 --verbose < 69_hide_stuff.patch || true
-          ls -l *.rej || true
-          cat *.rej || true
+          echo "Applying KSUN Hooks..."
+          cp ../../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./manual_hooks.patch
+          patch -p1 --fuzz=3 < ./manual_hooks.patch
           
       - name: Add Manager Patch
         run: |
