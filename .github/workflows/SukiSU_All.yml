@@ -461,20 +461,7 @@ jobs:
           sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
-
-      - name: Patch Bazel Configuration for make_goals
-        run: |
-          cd kernel_workspace/kernel_platform
-          if [ -f msm-kernel/BUILD.bazel ]; then
-            echo "Patching msm-kernel/BUILD.bazel to use make_goals"
-            sed -i '/MAKE_GOALS/d' msm-kernel/BUILD.bazel
-            echo 'make_goals = ["modules", "dtbs"]' >> msm-kernel/BUILD.bazel
-            git add msm-kernel/BUILD.bazel
-            git commit -m "Update msm-kernel/BUILD.bazel to use make_goals"
-          else
-            echo "msm-kernel/BUILD.bazel not found, skipping make_goals patch"
-          fi
+          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"      
 
       - name: Add sched_ext
         if: ${{ github.event.inputs.SCHED == 'true' }}
